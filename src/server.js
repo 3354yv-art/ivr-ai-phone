@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { YemotRouter, CallError } from 'yemot-router2';
 import { cfg } from './config.js';
@@ -386,7 +387,60 @@ h1{margin-top:0;font-size:24px}p{font-size:17px;line-height:1.6}
 .btn{display:inline-block;background:#1a73e8;color:#fff;padding:14px 30px;border-radius:8px;text-decoration:none;font-size:18px;margin-top:10px}</style></head>
 <body><div class="card"><h1>${esc(title)}</h1>${body}</div></body></html>`;
 
+// ---------- דף הגדרות חד-פעמי: המנהל מדביק מפתחות בדפדפן במקום לערוך קבצים ----------
+const SETUP_FIELDS = [
+  ['GEMINI_API_KEY', 'מפתח Gemini'],
+  ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
+  ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
+  ['MAIL_APP_PASSWORD', 'סיסמת אפליקציה של הג׳ימייל (אופציונלי)'],
+  ['BASE_URL', 'כתובת ציבורית של השרת (אופציונלי)'],
+  ['GOOGLE_CLIENT_ID', 'Google Client ID (אופציונלי)'],
+  ['GOOGLE_CLIENT_SECRET', 'Google Client Secret (אופציונלי)'],
+];
+const envFile = () => process.env.ENV_FILE || './.env';
+
+function saveEnv(values) {
+  const lines = fs.existsSync(envFile()) ? fs.readFileSync(envFile(), 'utf8').split('\n') : [];
+  for (const [k, v] of Object.entries(values)) {
+    const i = lines.findIndex((l) => l.startsWith(`${k}=`));
+    if (i >= 0) lines[i] = `${k}=${v}`;
+    else lines.push(`${k}=${v}`);
+  }
+  fs.writeFileSync(envFile(), lines.filter((l, i, a) => l !== '' || i < a.length - 1).join('\n') + '\n', { mode: 0o600 });
+}
+
+function addSetupRoutes(app) {
+  const guard = (req, res) => {
+    const k = String(req.query.key || req.body?.key || '');
+    if (!cfg.key || k !== cfg.key) {
+      res.status(403).send(page('אין גישה', '<p>הקישור לא תקין.</p>'));
+      return false;
+    }
+    return true;
+  };
+  app.get('/setup', (req, res) => {
+    if (!guard(req, res)) return;
+    const rows = SETUP_FIELDS.map(([k, label]) => {
+      const set = process.env[k] ? ' (כבר מוגדר, השאר ריק כדי לא לשנות)' : '';
+      return `<p style="text-align:right"><label>${esc(label)}${set}<br><input name="${k}" type="password" autocomplete="off" style="width:100%;padding:8px;font-size:16px"></label></p>`;
+    }).join('');
+    res.send(page('הגדרת קו הטלפון', `<form method="post" action="/setup"><input type="hidden" name="key" value="${esc(cfg.key)}">${rows}<button class="btn" style="border:0;cursor:pointer">שמור</button></form>`));
+  });
+  app.post('/setup', (req, res) => {
+    if (!guard(req, res)) return;
+    const values = {};
+    for (const [k] of SETUP_FIELDS) {
+      const v = String(req.body?.[k] || '').trim();
+      if (v && !/[\r\n]/.test(v)) values[k] = v;
+    }
+    if (Object.keys(values).length) saveEnv(values);
+    res.send(page('נשמר', '<p>ההגדרות נשמרו. השרת מופעל מחדש, ותוך כמה שניות הכל מוכן.</p>'));
+    if (Object.keys(values).length && process.env.NO_RESTART !== '1') setTimeout(() => process.exit(0), 800);
+  });
+}
+
 function addWebRoutes(app) {
+  addSetupRoutes(app);
   app.use((_req, res, next) => {
     res.set({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
     next();

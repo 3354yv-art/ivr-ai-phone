@@ -9,6 +9,8 @@ process.env.MAIL_USER = 'owner@example.com';
 process.env.GOOGLE_CLIENT_ID = 'x';
 process.env.GOOGLE_CLIENT_SECRET = 'y';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ivr-'));
+process.env.ENV_FILE = path.join(process.env.DATA_DIR, 'test.env');
+process.env.NO_RESTART = '1';
 const { createApp } = await import('../src/server.js');
 
 const server = createApp().listen(0);
@@ -90,6 +92,11 @@ check('שיחה ב: תשובה נשלחה דרך הג׳ימייל', (globalThis.
 const t = (u) => fetch(u).then((r) => r.text());
 check('מפתח שגוי נחסם', /hangup/.test(await t(`${root}/ivr?key=wrong&ApiCallId=b1&ApiPhone=0501234567&ApiDID=1&ApiExtension=1`)));
 check('מספר זר נחסם', /hangup/.test(await t(`${base}&ApiCallId=b2&ApiPhone=0529999999&ApiDID=1&ApiExtension=1`)));
+const setupBad = await fetch(`${root}/setup?key=wrong`);
+check('דף ההגדרות נעול בלי מפתח נכון', setupBad.status === 403);
+const setupOk = await fetch(`${root}/setup`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ key: 'secret', GEMINI_API_KEY: 'k123', YEMOT_TOKEN: '0771111111:pw' }) });
+const envTxt = fs.existsSync(process.env.ENV_FILE) ? fs.readFileSync(process.env.ENV_FILE, 'utf8') : '';
+check('דף ההגדרות שומר מפתחות בקובץ בהרשאות 600', setupOk.status === 200 && envTxt.includes('GEMINI_API_KEY=k123') && (fs.statSync(process.env.ENV_FILE).mode & 0o777) === 0o600);
 const file = path.join(process.env.DATA_DIR, 'users.json');
 check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file).mode & 0o777) === 0o600);
 
