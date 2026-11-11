@@ -1,0 +1,13 @@
+[Unit]
+Description=IVR AI (Yemot)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ivr-ai
+EnvironmentFile=/opt/ivr-ai/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

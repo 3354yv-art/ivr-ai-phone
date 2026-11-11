@@ -1,0 +1,452 @@
+import express from 'express';
+import { fileURLToPath } from 'url';
+import { YemotRouter, CallError } from 'yemot-router2';
+import { cfg } from './config.js';
+import { clean, chunk } from './tts.js';
+import * as ai from './gemini.js';
+import { downloadRecording, deleteRecording, tokenFor } from './yemot.js';
+import { fetchPage } from './web.js';
+import * as mail from './mail.js';
+import * as gmail from './gmail.js';
+import * as users from './users.js';
+import { sendLoginEmail } from './notify.js';
+
+const T = (data) => ({ type: 'text', data: clean(data) });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// שגיאות "בקרה" של הספרייה (ניתוק, יציאה) חייבות לעבור הלאה ולא להיבלע
+const isControl = (e) => e instanceof CallError;
+
+// ---------- כלי עזר לשיחה ----------
+
+// שואל שאלה עם הקשה אחת
+function ask(call, text, allowed, opts = {}) {
+  return call.read([T(text)], 'tap', {
+    max_digits: 1,
+    min_digits: 1,
+    sec_wait: 7,
+    digits_allowed: allowed,
+    ...opts,
+  });
+}
+
+// ממתין לפעולה ארוכה (ג'מיני, אתר) ומשמיע מוזיקה. ימות לא מחכה יותר מכמה שניות לתשובה,
+// לכן כל שנייה-שתיים חוזרים אליה עם הודעת המתנה קצרה עד שהפעולה מסתיימת.
+async function waitFor(call, promise, maxMs = 90000) {
+  let state = 'pending';
+  let value;
+  let error;
+  promise.then(
+    (v) => ((state = 'ok'), (value = v)),
+    (e) => ((state = 'err'), (error = e)),
+  );
+  await Promise.race([promise.catch(() => {}), sleep(300)]);
+  const started = Date.now();
+  let first = true;
+  while (state === 'pending') {
+    if (Date.now() - started > maxMs) throw new Error('הפעולה לקחה יותר מדי זמן');
+    await call.read(
+      first ? [T('אנא המתן')] : [{ type: 'music_on_hold', data: { musicName: cfg.music, maxSec: 3 } }],
+      'tap',
+      { max_digits: 1, min_digits: 1, sec_wait: 1, allow_empty: true, empty_val: 'None', digits_allowed: [] },
+    );
+    first = false;
+    await Promise.race([promise.catch(() => {}), sleep(100)]);
+  }
+  if (state === 'err') throw error;
+  return value;
+}
+
+// מקליט את המחייג ומתמלל. מחזיר טקסט (ריק אם לא נשמע דבר)
+async function listen(call, prompt, maxLen = 25) {
+  const path = await call.read([T(prompt)], 'record', {
+    no_confirm_menu: true,
+    min_length: 1,
+    max_length: maxLen,
+    file_name: `q${Date.now() % 100000000}`,
+  });
+  if (!path || path === 'None') return '';
+  const token = tokenFor(call);
+  const job = (async () => {
+    const wav = await downloadRecording(path, token);
+    deleteRecording(path, token);
+    return ai.transcribe(wav);
+  })();
+  return (await waitFor(call, job)).trim();
+}
+
+// מקריא טקסט בקטעים. 0 = עצירה, 4 = אחורה, 6 = דילוג
+async function speak(call, text) {
+  const parts = chunk(text);
+  if (!parts.length) {
+    await call.read([T('אין מה להקריא')], 'tap', { max_digits: 1, sec_wait: 1, allow_empty: true, empty_val: 'None', digits_allowed: [] });
+    return 'done';
+  }
+  let i = 0;
+  while (i < parts.length) {
+    const k = await call.read([{ type: 'text', data: parts[i] }], 'tap', {
+      max_digits: 1,
+      min_digits: 1,
+      sec_wait: 1,
+      allow_empty: true,
+      empty_val: 'None',
+      digits_allowed: [0, 4, 6],
+    });
+    if (k === '0') return 'stop';
+    if (k === '4') i = Math.max(0, i - 1);
+    else i += 1;
+  }
+  return 'done';
+}
+
+// ---------- שלוחה 1: צ'אט ----------
+async function chatMode(call) {
+  const history = [];
+  let q = await listen(call, 'מה תרצה לשאול');
+  while (true) {
+    if (!q) {
+      q = await listen(call, 'לא שמעתי, אפשר לשאול שוב');
+      if (!q) return;
+      continue;
+    }
+    const answer = await waitFor(call, ai.chat(history, q));
+    history.push({ role: 'user', text: q }, { role: 'model', text: answer });
+    if (history.length > 20) history.splice(0, 2);
+    let again = true;
+    while (again) {
+      await speak(call, answer);
+      const c = await ask(call, 'לשאלה נוספת הקש 1, לשמיעה חוזרת הקש 2, לתפריט הראשי הקש 0', [0, 1, 2], { sec_wait: 6, allow_empty: true, empty_val: '1' });
+      if (c === '2') continue;
+      if (c === '0') return;
+      again = false;
+    }
+    q = await listen(call, 'מה תרצה לשאול');
+  }
+}
+
+// ---------- דפדוף באתר ----------
+async function browse(call, startUrl) {
+  const stack = [];
+  let url = startUrl;
+  while (url) {
+    let page;
+    try {
+      page = await waitFor(call, fetchPage(url));
+    } catch (e) {
+      if (isControl(e)) throw e;
+      console.error('fetchPage', url, e.message);
+      await speak(call, 'לא הצלחתי לפתוח את האתר');
+      url = stack.pop() ?? null;
+      continue;
+    }
+    await speak(call, `נפתח הדף ${page.title}`);
+    let reading = true;
+    let next = null;
+    while (reading) {
+      const r = await speak(call, page.text);
+      if (r === 'done') {
+        await speak(call, 'סוף הדף');
+      }
+      // תפריט דף
+      const c = await ask(call, 'לסיכום הדף הקש 1, לקריאה מחדש 2, לקישורים בדף 3, לחזרה אחורה 0', [0, 1, 2, 3], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+      if (c === '1') {
+        const s = await waitFor(call, ai.summarize(page.text));
+        await speak(call, s);
+      } else if (c === '3') {
+        if (!page.links.length) {
+          await speak(call, 'לא נמצאו קישורים בדף');
+        } else {
+          const list = page.links.map((l, i) => `${i + 1}, ${l.text}`).join(', ');
+          const n = await ask(call, `הקש את מספר הקישור שתרצה לפתוח. ${list}`, page.links.map((_, i) => i + 1), { sec_wait: 10, allow_empty: true, empty_val: '0' });
+          const link = page.links[Number(n) - 1];
+          if (link) {
+            stack.push(url);
+            next = link.url;
+            reading = false;
+          }
+        }
+      } else if (c === '0') {
+        reading = false;
+      }
+      // c === '2' - קוראים שוב
+    }
+    url = next ?? (stack.length && !next ? stack.pop() : null);
+    if (!next && !url) break;
+  }
+}
+
+// ---------- שלוחה 3: חיפוש ----------
+async function searchMode(call) {
+  while (true) {
+    const q = await listen(call, 'מה לחפש בגוגל');
+    if (!q) {
+      const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
+      if (c === '1') continue;
+      return;
+    }
+    const res = await waitFor(call, ai.search(q));
+    let more = true;
+    while (more) {
+      await speak(call, res.answer);
+      const opts = res.sources.length
+        ? 'לשמיעת האתרים שנמצאו הקש 1, לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0'
+        : 'לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0';
+      const c = await ask(call, opts, [0, 1, 2, 3], { sec_wait: 8, allow_empty: true, empty_val: '3' });
+      if (c === '0') return;
+      if (c === '3') more = false;
+      else if (c === '1' && res.sources.length) {
+        const list = res.sources.map((s, i) => `אתר ${i + 1}, ${s.title}`).join(', ');
+        const n = await ask(call, `${list}. הקש את מספר האתר לכניסה, או אפס לחזרה`, [0, ...res.sources.map((_, i) => i + 1)], { sec_wait: 12, allow_empty: true, empty_val: '0' });
+        const s = res.sources[Number(n) - 1];
+        if (s) await browse(call, s.url);
+      }
+    }
+  }
+}
+
+// ---------- שלוחה 4: כניסה לאתר לפי שם ----------
+async function siteMode(call) {
+  while (true) {
+    const name = await listen(call, 'אמור את שם האתר');
+    if (!name) {
+      const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
+      if (c === '1') continue;
+      return;
+    }
+    const url = await waitFor(call, ai.findSite(name));
+    if (!url) {
+      await speak(call, 'לא מצאתי את האתר');
+      continue;
+    }
+    await browse(call, url);
+    const c = await ask(call, 'לכניסה לאתר אחר הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
+    if (c !== '1') return;
+  }
+}
+
+// ---------- שלוחה 2: מייל ----------
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// ספק המייל של המתקשר: ג'ימייל שחובר דרך הקישור, או תיבת השרת אם זה המייל של בעל המערכת
+function providerFor(call) {
+  const u = users.getUser(call.phone);
+  if (u?.google?.refresh) return gmail.provider(u.google.refresh);
+  if (u?.email && cfg.mailUser && u.email === cfg.mailUser.toLowerCase() && mail.mailEnabled()) return mail;
+  return null;
+}
+
+// מקריא כתובת מייל תו אחר תו: אותיות באנגלית, ספרות, ושמות לסימנים
+function spellEmail(email) {
+  const names = { '@': 'שטרודל', '.': 'נקודה', '-': 'מקף', _: 'קו תחתון', '+': 'פלוס' };
+  const out = [];
+  for (const run of email.match(/[a-z]+|\d+|./gi) || []) {
+    if (/^[a-z]+$/i.test(run)) out.push({ type: 'alpha', data: run.toLowerCase() });
+    else if (/^\d+$/.test(run)) out.push({ type: 'digits', data: run });
+    else if (names[run]) out.push({ type: 'text', data: names[run] });
+  }
+  return out;
+}
+
+// הרשמה: מקישים מייל בטלפון, מקבלים מייל עם כפתור, והקישור מחבר את הג'ימייל
+async function registerFlow(call) {
+  if (!call.phone) {
+    await speak(call, 'לא ניתן לחבר מייל משיחה ממספר חסוי');
+    return;
+  }
+  await speak(call, 'המייל שלך עדיין לא מחובר. נחבר אותו עכשיו');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const typed = await call.read([T('הקש את כתובת המייל שלך באנגלית, ובסיום הקש סולמית')], 'tap', {
+      typing_playback_mode: 'EmailKeyboard',
+      min_digits: 1,
+      sec_wait: 30,
+      allow_empty: true,
+      empty_val: 'None',
+    });
+    if (!typed || typed === 'None') return;
+    const email = String(typed).trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) {
+      await speak(call, 'הכתובת לא נראית תקינה');
+      continue;
+    }
+    const c = await call.read([T('הכתובת שהוקשה היא'), ...spellEmail(email), T('לשליחת הקישור הקש 1, להקשה מחדש הקש 2, לביטול הקש 0')], 'tap', {
+      max_digits: 1,
+      min_digits: 1,
+      sec_wait: 10,
+      digits_allowed: [0, 1, 2],
+      allow_empty: true,
+      empty_val: '0',
+    });
+    if (c === '2') continue;
+    if (c !== '1') return;
+    let token;
+    try {
+      token = users.createLoginToken(call.phone, email);
+    } catch (e) {
+      if (e.code !== 'rate') throw e;
+      await speak(call, 'נשלחו יותר מדי בקשות, נסה שוב בעוד שעה');
+      return;
+    }
+    await waitFor(call, sendLoginEmail(email, `${cfg.baseUrl}/connect?t=${token}`));
+    await speak(call, 'נשלח אליך מייל עם כפתור. פתח אותו וחבר את הג׳ימייל, ואחר כך חזור לכאן ללא צורך בשום דבר נוסף');
+    return;
+  }
+}
+
+async function mailMode(call) {
+  const prov = providerFor(call);
+  if (!prov) return registerFlow(call);
+  const msgs = await waitFor(call, prov.unread(5));
+  if (!msgs.length) {
+    await speak(call, 'אין הודעות חדשות');
+    return;
+  }
+  await speak(call, `יש ${msgs.length} הודעות חדשות`);
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    let stay = true;
+    while (stay) {
+      const c = await ask(call, `הודעה ${i + 1} מאת ${m.from}, בנושא ${m.subject}. לשמיעת ההודעה הקש 1, למענה בהקלטה הקש 2, להודעה הבאה הקש 3, לתפריט הראשי הקש 0`, [0, 1, 2, 3], { sec_wait: 8, allow_empty: true, empty_val: '3' });
+      if (c === '0') return;
+      if (c === '1') {
+        await speak(call, m.text || 'ההודעה ריקה');
+        prov.markRead(m.uid).catch(() => {});
+      } else if (c === '2') {
+        await replyFlow(call, prov, m);
+      } else {
+        stay = false;
+      }
+    }
+  }
+  await speak(call, 'אלו היו כל ההודעות החדשות');
+}
+
+async function replyFlow(call, prov, m) {
+  let body = await listen(call, 'אמור את תוכן התשובה', 60);
+  while (true) {
+    if (!body) {
+      await speak(call, 'לא שמעתי דבר, התשובה בוטלה');
+      return;
+    }
+    const c = await ask(call, `התשובה שלך היא: ${body}. לשליחה הקש 1, להקלטה מחדש הקש 2, לביטול הקש 0`, [0, 1, 2], { sec_wait: 10, allow_empty: true, empty_val: '0' });
+    if (c === '1') {
+      await waitFor(call, prov.sendReply(m, body));
+      await speak(call, 'התשובה נשלחה');
+      return;
+    }
+    if (c === '2') {
+      body = await listen(call, 'אמור את תוכן התשובה', 60);
+      continue;
+    }
+    await speak(call, 'התשובה בוטלה');
+    return;
+  }
+}
+
+// ---------- התפריט הראשי ----------
+function authorized(call) {
+  if (cfg.key && call.req.query.key !== cfg.key) return false;
+  if (cfg.allowedPhones.length) {
+    const p = String(call.phone || '').replace(/\D/g, '');
+    const ok = cfg.allowedPhones.some((a) => a.replace(/\D/g, '').slice(-9) === p.slice(-9) && p.length >= 9);
+    if (!ok) return false;
+  }
+  return true;
+}
+
+async function handler(call) {
+  if (!authorized(call)) {
+    console.warn('שיחה לא מורשית מ', call.phone);
+    return call.id_list_message([T('אין הרשאה'), { type: 'go_to_folder', data: 'hangup' }]);
+  }
+  console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
+  await call.id_list_message([T('ברוכים הבאים')], { prependToNextAction: true });
+  while (true) {
+    const d = await ask(call, 'לשיחה עם הבינה המלאכותית הקש 1, למייל הקש 2, לחיפוש בגוגל הקש 3, לכניסה לאתר הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
+    if (d === '0') {
+      return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
+    }
+    const fn = { 1: chatMode, 2: mailMode, 3: searchMode, 4: siteMode }[d];
+    if (!fn) continue;
+    try {
+      await fn(call);
+    } catch (e) {
+      if (isControl(e)) throw e;
+      console.error(`שגיאה בשלוחה ${d}:`, e);
+      await speak(call, 'אירעה תקלה, חוזרים לתפריט הראשי');
+    }
+  }
+}
+
+// ---------- דפי החיבור (נפתחים מהמייל) ----------
+const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const page = (title, body) => `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:14px;padding:32px;max-width:420px;box-shadow:0 2px 14px #0002;text-align:center}
+h1{margin-top:0;font-size:24px}p{font-size:17px;line-height:1.6}
+.btn{display:inline-block;background:#1a73e8;color:#fff;padding:14px 30px;border-radius:8px;text-decoration:none;font-size:18px;margin-top:10px}</style></head>
+<body><div class="card"><h1>${esc(title)}</h1>${body}</div></body></html>`;
+
+function addWebRoutes(app) {
+  app.use((_req, res, next) => {
+    res.set({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+    next();
+  });
+  app.get('/connect', (req, res) => {
+    const r = users.consumeLoginToken(String(req.query.t || ''));
+    if (!r) {
+      return res.status(400).send(page('הקישור לא תקף', '<p>הקישור פג תוקף או שכבר נעשה בו שימוש. אפשר לחזור לטלפון ולבקש קישור חדש.</p>'));
+    }
+    users.setEmailVerified(r.phone, r.email);
+    const sid = users.createSession(r.phone);
+    const g = gmail.googleEnabled()
+      ? `<p>עוד צעד אחד: לאשר לקו הטלפון לקרוא ולענות להודעות בג׳ימייל שלך.</p><a class="btn" href="/auth/google?s=${encodeURIComponent(sid)}">חבר את הג׳ימייל</a>`
+      : '<p>חיבור הג׳ימייל עדיין לא הופעל במערכת.</p>';
+    res.send(page('הטלפון חובר', `<p>הטלפון שלך חובר לכתובת ${esc(r.email)}.</p>${g}`));
+  });
+  app.get('/auth/google', (req, res) => {
+    const s = String(req.query.s || '');
+    if (!users.getSession(s) || !gmail.googleEnabled()) return res.status(400).send(page('הפעולה לא תקפה', '<p>חזור לקישור שבמייל.</p>'));
+    res.redirect(gmail.authUrl(s));
+  });
+  app.get('/auth/google/callback', async (req, res) => {
+    const s = String(req.query.state || '');
+    const sess = users.getSession(s);
+    if (!sess || !req.query.code) return res.status(400).send(page('החיבור נכשל', '<p>נסה שוב דרך הקישור שבמייל.</p>'));
+    try {
+      const g = await gmail.exchangeCode(String(req.query.code));
+      users.setGoogle(sess.phone, g);
+      users.dropSession(s);
+      res.send(page('הג׳ימייל חובר', `<p>הכל מוכן. אפשר לחזור לטלפון, ללחוץ 2 ולשמוע את המייל של ${esc(g.email)}.</p>`));
+    } catch (e) {
+      console.error('google callback', e.message);
+      res.status(500).send(page('החיבור נכשל', '<p>משהו השתבש בחיבור מול גוגל. נסה שוב.</p>'));
+    }
+  });
+}
+
+// ---------- השרת ----------
+export function createApp() {
+  const app = express();
+  app.use(express.urlencoded({ extended: true }));
+  const router = YemotRouter({
+    printLog: cfg.debug,
+    timeout: '15m',
+    defaults: { removeInvalidChars: true },
+    uncaughtErrorHandler: (error, call) => {
+      console.error('שגיאה לא מטופלת:', error);
+      return call.id_list_message([T('אירעה תקלה, נסה שוב מאוחר יותר'), { type: 'go_to_folder', data: 'hangup' }]);
+    },
+  });
+  router.get('/', handler);
+  router.post('/', handler);
+  app.use('/ivr', router);
+  addWebRoutes(app);
+  app.get('/health', (_req, res) => res.send('ok'));
+  return app;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (!cfg.key) console.warn('אזהרה: IVR_KEY לא מוגדר, השרת פתוח לכל מי שמכיר את הכתובת');
+  if (!cfg.geminiKey && !cfg.mock) console.warn('אזהרה: חסר GEMINI_API_KEY');
+  createApp().listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
+}
