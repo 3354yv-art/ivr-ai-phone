@@ -3,6 +3,7 @@
 set -e
 read -rsp "בחר סיסמה לניהול: " P </dev/tty; echo
 read -rsp "הקלד שוב: " P2 </dev/tty; echo
+echo "אורך הסיסמה שהוקלדה: ${#P} תווים"
 [ "$P" = "$P2" ] && [ ${#P} -ge 8 ] || { echo "הסיסמות שונות או קצרות מ-8 תווים"; exit 1; }
 H=$(ADMPW="$P" python3 -c "import os,hashlib;s=os.urandom(16);print(s.hex()+':'+hashlib.scrypt(os.environ['ADMPW'].encode(),salt=s,n=16384,r=8,p=1,dklen=64).hex())")
 unset P P2
