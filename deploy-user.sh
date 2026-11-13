@@ -2,11 +2,12 @@
 # התקנה/עדכון בלי הרשאות מנהל (למשתמש רגיל). בטוח להריץ שוב ושוב.
 set -uo pipefail
 H="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
-APP="$H/ivr-ai"; BIN="$H/bin"; NODEV=v22.11.0
+APP="$H/ivr-ai"; BIN="$H/bin"; NODEV=v22.14.0
 mkdir -p "$APP" "$BIN"
 cd "$H"
 
-if [ ! -x "$H/node/bin/node" ]; then
+if [ ! -x "$H/node/bin/node" ] || [ "$("$H/node/bin/node" -v)" != "$NODEV" ]; then
+  rm -rf "$H/node"
   curl -fsSL "https://nodejs.org/dist/$NODEV/node-$NODEV-linux-arm64.tar.xz" -o node.tar.xz || { echo "FAIL node download"; exit 1; }
   mkdir -p node && tar -xJf node.tar.xz -C node --strip-components=1 && rm -f node.tar.xz
 fi
