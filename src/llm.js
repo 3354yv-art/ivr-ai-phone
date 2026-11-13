@@ -4,7 +4,7 @@ import { transcribe as sttLocal } from './local.js';
 
 const SYSTEM = [
   'אתה עוזר קולי בטלפון. המשתמש שומע אותך בהקראה ולא קורא.',
-  'ענה בעברית, בשפה נקייה ומכובדת, קצר וברור: עד שלושה משפטים אלא אם ביקשו הרחבה.',
+  'ענה בעברית, בשפה נקייה ומכובדת, קצר וברור: עד שני משפטים קצרים אלא אם ביקשו הרחבה.',
   'בלי כוכביות, סימני עיצוב, רשימות, אימוג׳י או קישורים. כתוב משפטים רגילים.',
 ].join(' ');
 export { SYSTEM };
@@ -32,7 +32,7 @@ async function openai(base, key, model, messages, max_tokens, extra = {}) {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.4, ...extra }),
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(5000),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
   const t = ((await r.json()).choices?.[0]?.message?.content || '').trim();
@@ -54,19 +54,42 @@ async function ollama(messages, num_predict) {
   return ((await r.json()).message?.content || '').trim();
 }
 
-const order = () => cfg.chain.filter((n) => LLM[n]?.on());
 
-export async function complete(messages, max_tokens = 220) {
+// "בקשה מגובה": הראשון מתחיל מיד; אם לא ענה תוך HEDGE_MS (או נכשל) מצטרף הבא במקביל. מנצח הראשון שהצליח.
+async function hedged(names, run) {
+  const cloud = names.filter((n) => n !== 'local');
+  const useLocal = names.includes('local');
   let last;
-  for (const name of order()) {
+  if (cloud.length) {
     try {
-      return await LLM[name].call(messages, max_tokens);
-    } catch (e) {
-      last = e;
-      console.warn(`ספק ${name} נכשל: ${e.message}`);
-    }
+      return await new Promise((resolve, reject) => {
+        let started = 0, failed = 0, done = false;
+        const launch = () => {
+          if (done || started >= cloud.length) return;
+          const name = cloud[started++];
+          run(name).then(
+            (v) => { if (!done) { done = true; resolve(v); } },
+            (e) => {
+              last = e; console.warn(`ספק ${name} נכשל: ${e.message}`);
+              if (++failed === cloud.length) reject(e); else launch();
+            },
+          );
+          if (started < cloud.length) setTimeout(launch, cfg.hedgeMs);
+        };
+        launch();
+      });
+    } catch (e) { last = e; }
+  }
+  if (useLocal) {
+    try { return await run('local'); } catch (e) { last = e; console.warn(`ספק local נכשל: ${e.message}`); }
   }
   throw new Error('BUSY', { cause: last });
+}
+
+const order = () => cfg.chain.filter((n) => LLM[n]?.on());
+
+export async function complete(messages, max_tokens = 120) {
+  return hedged(order(), (n) => LLM[n].call(messages, max_tokens));
 }
 
 // ---- תמלול ----
@@ -78,7 +101,7 @@ async function sttOpenaiStyle(base, key, model, wav) {
   fd.append('temperature', '0');
   fd.append('response_format', 'json');
   const r = await fetch(`${base}/audio/transcriptions`, {
-    method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(15000),
+    method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(6000),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 120)}`);
   return String((await r.json()).text || '').trim();
@@ -98,7 +121,7 @@ const STT = {
           method: 'POST',
           headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.cfToken}` },
           body: JSON.stringify({ audio: Buffer.from(w).toString('base64'), language: 'he' }),
-          signal: AbortSignal.timeout(20000),
+          signal: AbortSignal.timeout(7000),
         },
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -109,14 +132,5 @@ const STT = {
 };
 
 export async function transcribeChain(wav) {
-  let last;
-  for (const name of cfg.sttChain.filter((n) => STT[n]?.on())) {
-    try {
-      return await STT[name].call(wav);
-    } catch (e) {
-      last = e;
-      console.warn(`תמלול ${name} נכשל: ${e.message}`);
-    }
-  }
-  throw new Error('BUSY', { cause: last });
+  return hedged(cfg.sttChain.filter((n) => STT[n]?.on()), (n) => STT[n].call(wav));
 }

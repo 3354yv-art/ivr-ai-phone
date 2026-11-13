@@ -60,6 +60,18 @@ async function waitFor(call, promise, maxMs = 90000) {
 
 // מקליט את המחייג ומתמלל. מחזיר טקסט (ריק אם לא נשמע דבר)
 async function listen(call, prompt, maxLen = 25) {
+  // זיהוי דיבור של ימות עצמה: בלי הורדת הקלטה ובלי תמלול נוסף. אם לא הובן, חוזרים להקלטה
+  if (cfg.yemotStt && !cfg.mock) {
+    try {
+      const t = await call.read([T(prompt)], 'stt', { lang: 'iw-IL', max_length: maxLen, quiet_max: 2, use_records_recognition_engine: true, allow_empty: true });
+      const txt = String(t ?? '').trim();
+      if (txt && txt !== 'None') return txt;
+      prompt = 'לא הבנתי, אמור שוב';
+    } catch (e) {
+      if (isControl(e)) throw e;
+      console.warn('stt של ימות נכשל:', e.message);
+    }
+  }
   const path = await call.read([T(prompt)], 'record', {
     no_confirm_menu: true,
     min_length: 1,

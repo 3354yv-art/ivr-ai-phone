@@ -46,6 +46,6 @@ export async function summarize(text) {
   const out = await complete([
     { role: 'system', content: SYSTEM },
     { role: 'user', content: `סכם בקצרה, עד ארבעה משפטים, את הטקסט הבא מדף אינטרנט:\n\n${text.slice(0, 8000)}` },
-  ], 250);
+  ], 200);
   return out || 'לא הצלחתי לסכם';
 }
