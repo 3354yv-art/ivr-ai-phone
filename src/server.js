@@ -41,7 +41,7 @@ async function waitFor(call, promise, maxMs = 90000) {
     (v) => ((state = 'ok'), (value = v)),
     (e) => ((state = 'err'), (error = e)),
   );
-  await Promise.race([promise.catch(() => {}), sleep(300)]);
+  await Promise.race([promise.catch(() => {}), sleep(cfg.aiProvider === 'groq' ? 2000 : 300)]);
   const started = Date.now();
   let first = true;
   while (state === 'pending') {
@@ -389,7 +389,8 @@ h1{margin-top:0;font-size:24px}p{font-size:17px;line-height:1.6}
 
 // ---------- דף הגדרות חד-פעמי: המנהל מדביק מפתחות בדפדפן במקום לערוך קבצים ----------
 const SETUP_FIELDS = [
-  ['GEMINI_API_KEY', 'מפתח Gemini'],
+  ['GROQ_API_KEY', 'מפתח Groq (חינמי, מהיר)'],
+  ['GEMINI_API_KEY', 'מפתח Gemini (אופציונלי)'],
   ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
   ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
   ['MAIL_APP_PASSWORD', 'סיסמת אפליקציה של הג׳ימייל (אופציונלי)'],
@@ -502,5 +503,6 @@ export function createApp() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (!cfg.key) console.warn('אזהרה: IVR_KEY לא מוגדר, השרת פתוח לכל מי שמכיר את הכתובת');
   if (cfg.aiProvider === 'gemini' && !cfg.geminiKey && !cfg.mock) console.warn('אזהרה: חסר GEMINI_API_KEY');
+  console.log(`מנוע AI: ${cfg.aiProvider}`);
   createApp().listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
 }

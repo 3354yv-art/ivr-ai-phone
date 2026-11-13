@@ -49,7 +49,7 @@ export async function chat(history, userText) {
 }
 
 // חיפוש ברשת בלי מפתח: דף HTML של DuckDuckGo
-async function ddg(query) {
+export async function ddg(query) {
   const r = await fetch('https://html.duckduckgo.com/html/', {
     method: 'POST',
     headers: {

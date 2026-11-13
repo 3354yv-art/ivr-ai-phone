@@ -5,7 +5,10 @@ export const cfg = {
   port: Number(process.env.PORT || 3000),
   // מפתח סודי שנכנס לכתובת השלוחה בימות המשיח (api_link=.../ivr?key=...)
   key: process.env.IVR_KEY || '',
-  aiProvider: process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'local'),
+  aiProvider: process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : process.env.GEMINI_API_KEY ? 'gemini' : 'local'),
+  groqKey: process.env.GROQ_API_KEY || '',
+  groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo',
   ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
   localModel: process.env.LOCAL_MODEL || 'qwen2.5:3b',
   sttUrl: process.env.STT_URL || 'http://127.0.0.1:8123',
