@@ -3,6 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { cfg } from './config.js';
 import * as users from './users.js';
+import { poolList, removeByTail } from './pool.js';
 
 // ---------- יומן חיפושים וחסימות (נשמר בקבצים בשרת בלבד) ----------
 const logFile = () => path.join(cfg.dataDir, 'queries.jsonl');
@@ -97,6 +98,7 @@ export function addAdminRoutes(app) {
     res.send(shell('ניהול', `<div class="card"><h1>ניהול קו הטלפון</h1><form method="post" action="/admin/logout"><button>יציאה</button></form></div>
 <div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr"> <button class="red">חסום</button></form><table>${bl}</table></div>
 <div class="card"><h2>משתמשים מחוברים (${phones.length})</h2><p>מוצגים רק מספרים. תוכן המייל והחשבון שלהם לא נשמר ולא נראה כאן.</p><table>${phones.map((p) => `<tr><td dir="ltr">${esc(p)}</td></tr>`).join('')}</table></div>
+<div class="card"><h2>מפתחות Groq שנתרמו (${poolList().length})</h2><p>מוצגות רק 4 ספרות אחרונות.</p><table>${poolList().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td><form method="post" action="/admin/pool-remove"><input type="hidden" name="t" value="${esc(k.tail)}"><button class="red">הסר</button></form></td></tr>`).join('')}</table></div>
 <div class="card"><h2>מה חיפשו (200 אחרונים)</h2><table><tr><th>זמן</th><th>טלפון</th><th>סוג</th><th>נאמר</th><th></th></tr>${rows}</table></div>`));
   });
 
@@ -129,6 +131,11 @@ export function addAdminRoutes(app) {
       blocked.add(p);
       saveBlocked();
     }
+    res.redirect('/admin');
+  });
+  app.post('/admin/pool-remove', (req, res) => {
+    if (!need(req, res)) return;
+    removeByTail(String(req.body?.t || '').slice(-4));
     res.redirect('/admin');
   });
   app.post('/admin/unblock', (req, res) => {

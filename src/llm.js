@@ -1,5 +1,6 @@
 // ספקי AI בשרשרת גיבוי: מנסים לפי הסדר, ועוברים לבא כשהמכסה נגמרה או שיש תקלה.
 import { cfg } from './config.js';
+import { allKeys } from './pool.js';
 import { transcribe as sttLocal } from './local.js';
 
 const SYSTEM = [
@@ -12,7 +13,7 @@ export { SYSTEM };
 // כמה מפתחות לאותו ספק: מחלקים עומס בסבב, ובכישלון מנסים את הבא
 let rr = 0;
 async function withKeys(fn) {
-  const keys = cfg.groqKeys;
+  const keys = allKeys();
   const start = rr++ % keys.length;
   let last;
   for (let i = 0; i < keys.length; i++) {
@@ -23,14 +24,14 @@ async function withKeys(fn) {
 
 // חימום חיבור: חוסך לחיצת יד TLS בשיחה הראשונה
 export function warmUp() {
-  if (cfg.groqKeys.length) fetch('https://api.groq.com/openai/v1/models', { headers: { authorization: `Bearer ${cfg.groqKeys[0]}` }, signal: AbortSignal.timeout(5000) }).catch(() => {});
+  if (allKeys().length) fetch('https://api.groq.com/openai/v1/models', { headers: { authorization: `Bearer ${allKeys()[0]}` }, signal: AbortSignal.timeout(5000) }).catch(() => {});
 }
 
 // ---- מודלי שפה ----
 const cf = () => `https://api.cloudflare.com/client/v4/accounts/${cfg.cfAccountId}/ai/v1`;
 const LLM = {
   groq: {
-    on: () => cfg.groqKeys.length > 0,
+    on: () => allKeys().length > 0,
     call: (m, n) => withKeys((k) => openai('https://api.groq.com/openai/v1', k, cfg.groqModel, m, n, /gpt-oss/.test(cfg.groqModel) ? { reasoning_effort: 'low' } : {})),
   },
   cerebras: {
@@ -126,7 +127,7 @@ async function sttOpenaiStyle(base, key, model, wav) {
 
 const STT = {
   groq: {
-    on: () => cfg.groqKeys.length > 0,
+    on: () => allKeys().length > 0,
     call: (w) => withKeys((k) => sttOpenaiStyle('https://api.groq.com/openai/v1', k, cfg.groqSttModel, w)),
   },
   cloudflare: {

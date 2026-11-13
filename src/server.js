@@ -12,6 +12,7 @@ import * as mail from './mail.js';
 import * as gmail from './gmail.js';
 import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
+import { addPoolRoutes, allKeys } from './pool.js';
 import { addAdminRoutes, isBlocked, logQuery, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
@@ -43,7 +44,7 @@ async function waitFor(call, promise, maxMs = 90000) {
     (v) => ((state = 'ok'), (value = v)),
     (e) => ((state = 'err'), (error = e)),
   );
-  await Promise.race([promise.catch(() => {}), sleep(cfg.groqKey || cfg.cerebrasKey || cfg.cfToken ? 2000 : 300)]);
+  await Promise.race([promise.catch(() => {}), sleep(allKeys().length || cfg.cerebrasKey || cfg.cfToken ? 2000 : 300)]);
   const started = Date.now();
   let first = true;
   while (state === 'pending') {
@@ -519,6 +520,7 @@ function addSetupRoutes(app) {
 function addWebRoutes(app) {
   addSetupRoutes(app);
   addAdminRoutes(app);
+  addPoolRoutes(app);
   app.use((_req, res, next) => {
     res.set({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
     next();

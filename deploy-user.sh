@@ -22,7 +22,7 @@ if [ ! -f .env ]; then
   KEY=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)
   cat > .env <<ENVEOF
 IVR_KEY=$KEY
-ALLOWED_PHONES=0556791058
+ALLOWED_PHONES=${ALLOWED_PHONES:-}
 PORT=3000
 DATA_DIR=$APP/data
 ENV_FILE=$APP/.env
