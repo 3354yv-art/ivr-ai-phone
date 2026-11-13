@@ -12,6 +12,7 @@ import * as mail from './mail.js';
 import * as gmail from './gmail.js';
 import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
+import { addAdminRoutes, isBlocked, logQuery } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -60,7 +61,13 @@ async function waitFor(call, promise, maxMs = 90000) {
 }
 
 // מקליט את המחייג ומתמלל. מחזיר טקסט (ריק אם לא נשמע דבר)
-async function listen(call, prompt, maxLen = 25) {
+async function listen(call, prompt, maxLen = 25, kind = 'דיבור') {
+  const txt = await listenRaw(call, prompt, maxLen);
+  if (kind) logQuery(call.phone, kind, txt);
+  return txt;
+}
+
+async function listenRaw(call, prompt, maxLen = 25) {
   // זיהוי דיבור של ימות עצמה: בלי הורדת הקלטה ובלי תמלול נוסף. אם לא הובן, חוזרים להקלטה
   if (cfg.yemotStt && !cfg.mock) {
     try {
@@ -117,7 +124,7 @@ async function speak(call, text) {
 // ---------- שלוחה 1: צ'אט ----------
 async function chatMode(call) {
   const history = [];
-  let q = await listen(call, 'מה תרצה לשאול');
+  let q = await listen(call, 'מה תרצה לשאול', 25, 'שיחה עם AI');
   while (true) {
     if (!q) {
       q = await listen(call, 'לא שמעתי, אפשר לשאול שוב');
@@ -135,7 +142,7 @@ async function chatMode(call) {
       if (c === '0') return;
       again = false;
     }
-    q = await listen(call, 'מה תרצה לשאול');
+    q = await listen(call, 'מה תרצה לשאול', 25, 'שיחה עם AI');
   }
 }
 
@@ -193,7 +200,7 @@ async function browse(call, startUrl) {
 // ---------- שלוחה 3: חיפוש ----------
 async function searchMode(call) {
   while (true) {
-    const q = await listen(call, 'מה לחפש בגוגל');
+    const q = await listen(call, 'מה לחפש בגוגל', 25, 'חיפוש');
     if (!q) {
       const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
       if (c === '1') continue;
@@ -222,7 +229,7 @@ async function searchMode(call) {
 // ---------- שלוחה 4: כניסה לאתר לפי שם ----------
 async function siteMode(call) {
   while (true) {
-    const name = await listen(call, 'אמור את שם האתר');
+    const name = await listen(call, 'אמור את שם האתר', 25, 'כניסה לאתר');
     if (!name) {
       const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
       if (c === '1') continue;
@@ -336,7 +343,7 @@ async function mailMode(call) {
 }
 
 async function replyFlow(call, prov, m) {
-  let body = await listen(call, 'אמור את תוכן התשובה', 60);
+  let body = await listen(call, 'אמור את תוכן התשובה', 60, null);
   while (true) {
     if (!body) {
       await speak(call, 'לא שמעתי דבר, התשובה בוטלה');
@@ -349,7 +356,7 @@ async function replyFlow(call, prov, m) {
       return;
     }
     if (c === '2') {
-      body = await listen(call, 'אמור את תוכן התשובה', 60);
+      body = await listen(call, 'אמור את תוכן התשובה', 60, null);
       continue;
     }
     await speak(call, 'התשובה בוטלה');
@@ -373,8 +380,11 @@ async function handler(call) {
     console.warn('שיחה לא מורשית מ', call.phone);
     return call.id_list_message([T('אין הרשאה'), { type: 'go_to_folder', data: 'hangup' }]);
   }
+  if (isBlocked(call.phone)) {
+    return call.id_list_message([T('המספר שלך נחסם'), { type: 'go_to_folder', data: 'hangup' }]);
+  }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
-  await call.id_list_message([T('ברוכים הבאים')], { prependToNextAction: true });
+  await call.id_list_message([T('ברוכים הבאים. שימו לב, שאלות וחיפושים נרשמים לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
     const d = await ask(call, 'לשיחה עם הבינה המלאכותית הקש 1, למייל הקש 2, לחיפוש בגוגל הקש 3, לכניסה לאתר הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
     if (d === '0') {
@@ -459,6 +469,7 @@ function addSetupRoutes(app) {
 
 function addWebRoutes(app) {
   addSetupRoutes(app);
+  addAdminRoutes(app);
   app.use((_req, res, next) => {
     res.set({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
     next();
