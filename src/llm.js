@@ -14,7 +14,7 @@ const cf = () => `https://api.cloudflare.com/client/v4/accounts/${cfg.cfAccountI
 const LLM = {
   groq: {
     on: () => !!cfg.groqKey,
-    call: (m, n) => openai('https://api.groq.com/openai/v1', cfg.groqKey, cfg.groqModel, m, n),
+    call: (m, n) => openai('https://api.groq.com/openai/v1', cfg.groqKey, cfg.groqModel, m, n, /gpt-oss/.test(cfg.groqModel) ? { reasoning_effort: 'low' } : {}),
   },
   cerebras: {
     on: () => !!cfg.cerebrasKey,

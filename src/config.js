@@ -7,7 +7,7 @@ export const cfg = {
   key: process.env.IVR_KEY || '',
   aiProvider: process.env.AI_PROVIDER || 'chain',
   groqKey: process.env.GROQ_API_KEY || '',
-  groqModel: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
   groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo',
   cerebrasKey: process.env.CEREBRAS_API_KEY || '',
   cerebrasModel: process.env.CEREBRAS_MODEL || 'gpt-oss-120b',
