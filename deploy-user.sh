@@ -2,7 +2,7 @@
 # התקנה/עדכון בלי הרשאות מנהל (למשתמש רגיל). בטוח להריץ שוב ושוב.
 set -uo pipefail
 H="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"
-APP="$H/ivr-ai"; BIN="$H/bin"; NODEV=v22.14.0
+APP="$H/ivr-ai"; BIN="$H/bin"; NODEV=v22.20.0
 mkdir -p "$APP" "$BIN"
 cd "$H"
 
