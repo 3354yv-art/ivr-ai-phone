@@ -49,7 +49,7 @@ export async function chat(history, userText) {
 }
 
 // חיפוש ברשת בלי מפתח: דף HTML של DuckDuckGo
-export async function ddg(query) {
+async function ddgHtml(query) {
   const r = await fetch('https://html.duckduckgo.com/html/', {
     method: 'POST',
     headers: {
@@ -57,7 +57,7 @@ export async function ddg(query) {
       'user-agent': 'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36',
     },
     body: new URLSearchParams({ q: query, kl: 'il-he' }).toString(),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(7000),
   });
   if (!r.ok) throw new Error(`search ${r.status}`);
   const doc = new JSDOM(await r.text()).window.document;
@@ -104,4 +104,71 @@ export async function summarize(text) {
     { role: 'user', content: `סכם בקצרה, עד ארבעה משפטים, את הטקסט הבא מדף אינטרנט:\n\n${text.slice(0, 5000)}` },
   ], 200);
   return out || 'לא הצלחתי לסכם';
+}
+
+const UA = 'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
+
+async function ddgLite(query) {
+  const r = await fetch('https://lite.duckduckgo.com/lite/', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'user-agent': UA },
+    body: new URLSearchParams({ q: query, kl: 'il-he' }).toString(),
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!r.ok) throw new Error(`lite ${r.status}`);
+  const doc = new JSDOM(await r.text()).window.document;
+  const out = [];
+  const links = [...doc.querySelectorAll('a.result-link')];
+  const snips = [...doc.querySelectorAll('td.result-snippet')];
+  links.forEach((a, i) => {
+    let url = a.getAttribute('href') || '';
+    const m = url.match(/[?&]uddg=([^&]+)/);
+    if (m) url = decodeURIComponent(m[1]);
+    if (url.startsWith('//')) url = `https:${url}`;
+    if (/^https?:\/\//.test(url) && out.length < 5) out.push({ title: a.textContent.trim(), url, snippet: (snips[i]?.textContent || '').trim() });
+  });
+  return out;
+}
+
+async function bing(query) {
+  const r = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=he&cc=IL`, {
+    headers: { 'user-agent': UA, 'accept-language': 'he-IL,he;q=0.9' },
+    signal: AbortSignal.timeout(7000),
+  });
+  if (!r.ok) throw new Error(`bing ${r.status}`);
+  const doc = new JSDOM(await r.text()).window.document;
+  const out = [];
+  for (const el of doc.querySelectorAll('li.b_algo')) {
+    const a = el.querySelector('h2 a');
+    if (!a) continue;
+    let url = a.getAttribute('href') || '';
+    const m = url.match(/[?&]u=a1([^&]+)/);
+    if (m) {
+      try { url = Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'); } catch { continue; }
+    }
+    if (!/^https?:\/\//.test(url)) continue;
+    out.push({ title: a.textContent.trim(), url, snippet: (el.querySelector('.b_caption p, p')?.textContent || '').trim() });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+// מריץ את כל מנועי החיפוש במקביל ומחזיר את התוצאה הלא-ריקה הראשונה
+export async function ddg(query) {
+  const engines = [ddgHtml, ddgLite, bing];
+  return new Promise((resolve) => {
+    let pending = engines.length;
+    let done = false;
+    for (const run of engines) {
+      run(query).then(
+        (res) => {
+          if (!done && res.length) { done = true; resolve(res); } else if (--pending === 0 && !done) resolve([]);
+        },
+        (e) => {
+          console.warn('חיפוש נכשל:', e.message);
+          if (--pending === 0 && !done) resolve([]);
+        },
+      );
+    }
+  });
 }

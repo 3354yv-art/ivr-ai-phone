@@ -24,7 +24,14 @@ export async function chat(history, userText) {
 export async function search(query) {
   if (legacy) return gemini.search(query);
   const results = await ddg(query);
-  if (!results.length) return { answer: 'לא מצאתי תוצאות', sources: [] };
+  if (!results.length) {
+    // אין תוצאות מהרשת: עונים מהידע של המודל
+    const a = await complete([
+      { role: 'system', content: SYSTEM },
+      { role: 'user', content: `ענה בקצרה על: ${query}` },
+    ]);
+    return { answer: a || 'לא מצאתי תוצאות', sources: [] };
+  }
   const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet}`).join('\n');
   const answer = await complete([
     { role: 'system', content: SYSTEM },
