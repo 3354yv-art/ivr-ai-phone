@@ -41,7 +41,7 @@ async function waitFor(call, promise, maxMs = 90000) {
     (v) => ((state = 'ok'), (value = v)),
     (e) => ((state = 'err'), (error = e)),
   );
-  await Promise.race([promise.catch(() => {}), sleep(cfg.aiProvider === 'groq' ? 2000 : 300)]);
+  await Promise.race([promise.catch(() => {}), sleep(cfg.groqKey || cfg.cerebrasKey || cfg.cfToken ? 2000 : 300)]);
   const started = Date.now();
   let first = true;
   while (state === 'pending') {
@@ -373,7 +373,7 @@ async function handler(call) {
     } catch (e) {
       if (isControl(e)) throw e;
       console.error(`שגיאה בשלוחה ${d}:`, e);
-      await speak(call, 'אירעה תקלה, חוזרים לתפריט הראשי');
+      await speak(call, e.message === 'BUSY' ? 'כל הקווים עסוקים כרגע, נסה שוב בעוד רגע. חוזרים לתפריט הראשי' : 'אירעה תקלה, חוזרים לתפריט הראשי');
     }
   }
 }
@@ -390,6 +390,9 @@ h1{margin-top:0;font-size:24px}p{font-size:17px;line-height:1.6}
 // ---------- דף הגדרות חד-פעמי: המנהל מדביק מפתחות בדפדפן במקום לערוך קבצים ----------
 const SETUP_FIELDS = [
   ['GROQ_API_KEY', 'מפתח Groq (חינמי, מהיר)'],
+  ['CEREBRAS_API_KEY', 'מפתח Cerebras (גיבוי, אופציונלי)'],
+  ['CLOUDFLARE_ACCOUNT_ID', 'Cloudflare Account ID (גיבוי, אופציונלי)'],
+  ['CLOUDFLARE_API_TOKEN', 'Cloudflare API Token (גיבוי, אופציונלי)'],
   ['GEMINI_API_KEY', 'מפתח Gemini (אופציונלי)'],
   ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
   ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
