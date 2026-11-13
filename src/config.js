@@ -5,6 +5,10 @@ export const cfg = {
   port: Number(process.env.PORT || 3000),
   // מפתח סודי שנכנס לכתובת השלוחה בימות המשיח (api_link=.../ivr?key=...)
   key: process.env.IVR_KEY || '',
+  aiProvider: process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'local'),
+  ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
+  localModel: process.env.LOCAL_MODEL || 'qwen2.5:3b',
+  sttUrl: process.env.STT_URL || 'http://127.0.0.1:8123',
   geminiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
   // טוקן ימות המשיח: מספר מערכת:סיסמה
