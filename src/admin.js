@@ -34,6 +34,11 @@ export function logQuery(phone, kind, text) {
   }
 }
 
+export function recentFor(phone, n = 3) {
+  const k = norm(phone);
+  return k ? readLog(500).filter((r) => r.p === k && r.k !== 'שיחה עם AI').slice(0, n) : [];
+}
+
 function readLog(limit = 200) {
   try {
     const lines = fs.readFileSync(logFile(), 'utf8').trim().split('\n').filter(Boolean);

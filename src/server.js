@@ -12,7 +12,7 @@ import * as mail from './mail.js';
 import * as gmail from './gmail.js';
 import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
-import { addAdminRoutes, isBlocked, logQuery } from './admin.js';
+import { addAdminRoutes, isBlocked, logQuery, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -364,6 +364,32 @@ async function replyFlow(call, prov, m) {
   }
 }
 
+// ---------- איזור אישי ----------
+async function personalMode(call) {
+  while (true) {
+    const u = users.getUser(call.phone);
+    const state = u?.google?.refresh ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
+    const c = await ask(call, `האיזור האישי. ${state}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, לתפריט הראשי הקש 0`, [0, 1, 2], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    if (c === '0') return;
+    if (c === '1') {
+      const mine = recentFor(call.phone, 3);
+      await speak(call, mine.length ? mine.map((r, i) => `${i + 1}, ${r.q}`).join('. ') : 'עדיין אין חיפושים');
+    } else if (c === '2') {
+      await registerFlow(call);
+    }
+  }
+}
+
+// ---------- חיפוש וכניסה לאתרים ----------
+async function webMode(call) {
+  while (true) {
+    const c = await ask(call, 'לחיפוש בגוגל הקש 1, לכניסה לאתר לפי שם הקש 2, לתפריט הראשי הקש 0', [0, 1, 2], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    if (c === '1') await searchMode(call);
+    else if (c === '2') await siteMode(call);
+    else return;
+  }
+}
+
 // ---------- התפריט הראשי ----------
 function authorized(call) {
   if (cfg.key && call.req.query.key !== cfg.key) return false;
@@ -386,11 +412,11 @@ async function handler(call) {
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   await call.id_list_message([T('ברוכים הבאים. שימו לב, שאלות וחיפושים נרשמים לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
-    const d = await ask(call, 'לשיחה עם הבינה המלאכותית הקש 1, למייל הקש 2, לחיפוש בגוגל הקש 3, לכניסה לאתר הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
+    const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
     if (d === '0') {
       return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
     }
-    const fn = { 1: chatMode, 2: mailMode, 3: searchMode, 4: siteMode }[d];
+    const fn = { 1: chatMode, 2: webMode, 3: mailMode, 4: personalMode }[d];
     if (!fn) continue;
     try {
       await fn(call);

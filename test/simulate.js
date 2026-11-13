@@ -56,9 +56,9 @@ const ended = (t) => t.some((l) => /(go_to_folder=|g-)hangup/.test(l) && !l.incl
 // ---- שיחה א: צ'אט, חיפוש, אתר, ואז מייל כשעדיין לא רשום -> הרשמה ----
 const A = await drive('callA', [
   '1', 'מה זה אבטיח', '0',
-  '3', 'אבטיח', '1', '1', '3', '1', '0', '0', '0',
-  '4', 'example.com', '0', '0',
-  '2', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
+  '2', '1', 'אבטיח', '1', '1', '3', '1', '0', '0', '0', '0',
+  '2', '2', 'example.com', '0', '0', '0',
+  '3', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
   '0',
 ]);
 check('שיחה א: כל ההקשות נצרכו והשיחה נותקה כראוי', A.used === A.total && ended(A.transcript));
@@ -84,7 +84,7 @@ const bad = await fetch(`${root}/auth/google/callback?code=mock&state=bogus`);
 check('state לא מוכר נדחה', bad.status === 400);
 
 // ---- שיחה ב: עכשיו המייל עובד ישירות ----
-const B = await drive('callB', ['2', '1', '2', 'תודה רבה', '1', '3', '3', '0']);
+const B = await drive('callB', ['3', '1', '2', 'תודה רבה', '1', '3', '3', '0']);
 check('שיחה ב: המייל עובד ללא הרשמה נוספת', B.used === B.total && ended(B.transcript) && said(B.transcript, 'יש 2 הודעות'));
 check('שיחה ב: תשובה נשלחה דרך הג׳ימייל', (globalThis.__mockSent || []).some((x) => x.via === 'gmail' && x.body === 'תודה רבה'));
 
