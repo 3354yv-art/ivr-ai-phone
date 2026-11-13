@@ -532,7 +532,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (!cfg.key) console.warn('אזהרה: IVR_KEY לא מוגדר, השרת פתוח לכל מי שמכיר את הכתובת');
   if (cfg.aiProvider === 'gemini' && !cfg.geminiKey && !cfg.mock) console.warn('אזהרה: חסר GEMINI_API_KEY');
   console.log(`מנוע AI: ${cfg.aiProvider}`);
-  createApp().listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
+  const app = createApp();
+  app.listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
+  // פורט נוסף (למשל 6080) לכניסה מהדפדפן כשחומת האש של השרת סוגרת את 3000
+  if (process.env.EXTRA_PORT) app.listen(Number(process.env.EXTRA_PORT), () => console.log(`גם על :${process.env.EXTRA_PORT}`));
   llmWarm();
   setInterval(llmWarm, 4 * 60 * 1000).unref();
 }
