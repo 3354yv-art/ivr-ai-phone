@@ -5,6 +5,7 @@ import { YemotRouter, CallError } from 'yemot-router2';
 import { cfg } from './config.js';
 import { clean, chunk } from './tts.js';
 import * as ai from './ai.js';
+import { warmUp as llmWarm } from './llm.js';
 import { downloadRecording, deleteRecording, tokenFor } from './yemot.js';
 import { fetchPage } from './web.js';
 import * as mail from './mail.js';
@@ -520,4 +521,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (cfg.aiProvider === 'gemini' && !cfg.geminiKey && !cfg.mock) console.warn('אזהרה: חסר GEMINI_API_KEY');
   console.log(`מנוע AI: ${cfg.aiProvider}`);
   createApp().listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
+  llmWarm();
+  setInterval(llmWarm, 4 * 60 * 1000).unref();
 }

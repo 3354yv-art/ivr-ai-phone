@@ -6,7 +6,9 @@ export const cfg = {
   // מפתח סודי שנכנס לכתובת השלוחה בימות המשיח (api_link=.../ivr?key=...)
   key: process.env.IVR_KEY || '',
   aiProvider: process.env.AI_PROVIDER || 'chain',
-  groqKey: process.env.GROQ_API_KEY || '',
+  groqKey: (process.env.GROQ_API_KEY || '').split(/[,\s]+/)[0],
+  // אפשר כמה מפתחות מופרדים בפסיק; מתחלפים ביניהם אוטומטית
+  groqKeys: (process.env.GROQ_API_KEY || '').split(/[,\s]+/).filter(Boolean),
   groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
   groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo',
   cerebrasKey: process.env.CEREBRAS_API_KEY || '',
