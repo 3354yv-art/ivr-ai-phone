@@ -56,3 +56,24 @@ export async function summarize(text) {
   ], 200);
   return out || 'לא הצלחתי לסכם';
 }
+
+// סוכן הדף: מתרגם פקודה בעברית לפעולה על הדף שהמתקשר נמצא בו.
+// פועל על הטקסט והקישורים של הדף (לא לוחץ על כפתורי אתר שדורשים הרצת קוד).
+export async function agent(page, command) {
+  if (legacy) return { action: 'answer', text: 'הסוכן לא זמין במצב בדיקה' };
+  const links = (page.allLinks || page.links || []).map((l, i) => `${i + 1}. ${l.text}`).join('\n');
+  const out = await complete([
+    { role: 'system', content: 'אתה סוכן שמפעיל דף אינטרנט עבור מתקשר בטלפון. החזר JSON בלבד, בלי הסברים, באחד הפורמטים: {"action":"open","index":מספר קישור} לפתיחת קישור מהרשימה, {"action":"back"} לחזרה אחורה, {"action":"summary"} לסיכום הדף, {"action":"read"} להקראה מחדש, {"action":"answer","text":"תשובה קצרה בעברית על סמך תוכן הדף"} לשאלה על הדף, {"action":"unknown"} אם הבקשה לא ברורה או לא אפשרית.' },
+    { role: 'user', content: `כותרת הדף: ${page.title}\nתוכן הדף: ${page.text.slice(0, 3000)}\n\nקישורים:\n${links}\n\nפקודת המתקשר: ${command}` },
+  ], 160);
+  try {
+    const j = JSON.parse(String(out).match(/\{[\s\S]*\}/)[0]);
+    if (j.action === 'open') {
+      const l = (page.allLinks || page.links)[Number(j.index) - 1];
+      return l ? { action: 'open', url: l.url, title: l.text } : { action: 'unknown' };
+    }
+    return ['back', 'summary', 'read', 'answer'].includes(j.action) ? j : { action: 'unknown' };
+  } catch {
+    return { action: 'unknown' };
+  }
+}

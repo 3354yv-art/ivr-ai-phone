@@ -29,6 +29,7 @@ export async function fetchPage(url) {
   const doc = dom.window.document;
 
   const links = [];
+  const allLinks = [];
   const seen = new Set();
   for (const a of doc.querySelectorAll('a[href]')) {
     const text = a.textContent.replace(/\s+/g, ' ').trim();
@@ -41,11 +42,12 @@ export async function fetchPage(url) {
     }
     if (!/^https?:$/.test(href.protocol) || seen.has(href.href)) continue;
     seen.add(href.href);
-    links.push({ text, url: href.href });
-    if (links.length >= 8) break;
+    allLinks.push({ text, url: href.href });
+    if (links.length < 8) links.push({ text, url: href.href });
+    if (allLinks.length >= 40) break;
   }
 
   const article = new Readability(doc.cloneNode(true)).parse();
   const text = (article?.textContent || doc.body?.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim();
-  return { title: article?.title || doc.title || u.hostname, text: text.slice(0, 20000), links };
+  return { title: article?.title || doc.title || u.hostname, text: text.slice(0, 20000), links, allLinks };
 }

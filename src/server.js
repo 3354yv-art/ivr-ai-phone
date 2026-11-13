@@ -170,7 +170,7 @@ async function browse(call, startUrl) {
         await speak(call, 'סוף הדף');
       }
       // תפריט דף
-      const c = await ask(call, 'לסיכום הדף הקש 1, לקריאה מחדש 2, לקישורים בדף 3, לחזרה אחורה 0', [0, 1, 2, 3], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+      const c = await ask(call, 'לסיכום הדף הקש 1, לקריאה מחדש 2, לקישורים בדף 3, לדבר עם הסוכן הקש 5, לחזרה אחורה 0', [0, 1, 2, 3, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
       if (c === '1') {
         const s = await waitFor(call, ai.summarize(page.text));
         await speak(call, s);
@@ -185,6 +185,29 @@ async function browse(call, startUrl) {
             stack.push(url);
             next = link.url;
             reading = false;
+          }
+        }
+      } else if (c === '5') {
+        const cmd = await listen(call, 'אמור לסוכן מה לעשות בדף', 25, 'פקודה לסוכן');
+        if (!cmd) {
+          await speak(call, 'לא שמעתי');
+        } else {
+          const act = await waitFor(call, ai.agent(page, cmd));
+          if (act.action === 'open') {
+            await speak(call, `נכנס ל${act.title}`);
+            stack.push(url);
+            next = act.url;
+            reading = false;
+          } else if (act.action === 'back') {
+            reading = false;
+          } else if (act.action === 'summary') {
+            await speak(call, await waitFor(call, ai.summarize(page.text)));
+          } else if (act.action === 'answer') {
+            await speak(call, act.text || 'אין לי תשובה');
+          } else if (act.action === 'read') {
+            continue;
+          } else {
+            await speak(call, 'לא הצלחתי להבין או לבצע את הבקשה');
           }
         }
       } else if (c === '0') {
