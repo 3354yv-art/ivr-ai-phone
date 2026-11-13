@@ -18,7 +18,7 @@ export const cfg = {
   cfModel: process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   // סדר ניסיון הספקים. מוותרים אוטומטית על ספק בלי מפתח
   hedgeMs: Number(process.env.HEDGE_MS || 1200),
-  yemotStt: process.env.YEMOT_STT !== '0',
+  yemotStt: process.env.YEMOT_STT === '1',
   chain: (process.env.AI_CHAIN || 'groq,cerebras,cloudflare,local').split(',').map((x) => x.trim()),
   sttChain: (process.env.STT_CHAIN || 'groq,cloudflare,local').split(',').map((x) => x.trim()),
   ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
