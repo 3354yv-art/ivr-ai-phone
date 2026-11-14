@@ -13,7 +13,7 @@ import * as gmail from './gmail.js';
 import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
 import { addPoolRoutes, allKeys } from './pool.js';
-import { addAdminRoutes, isBlocked, logQuery, recentFor } from './admin.js';
+import { addAdminRoutes, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -133,6 +133,7 @@ async function chatMode(call) {
       continue;
     }
     const answer = await waitFor(call, ai.chat(history, q));
+    logAnswer(call.phone, 'תשובת AI', answer);
     history.push({ role: 'user', text: q }, { role: 'model', text: answer });
     if (history.length > 20) history.splice(0, 2);
     let again = true;
@@ -154,7 +155,10 @@ async function agentCommand(call, page) {
     await speak(call, 'לא שמעתי');
     return null;
   }
-  return waitFor(call, ai.agent(page, cmd));
+  const act = await waitFor(call, ai.agent(page, cmd));
+  if (act?.action === 'answer') logAnswer(call.phone, 'תשובת העוזר', act.text);
+  else if (act?.action === 'open') logAnswer(call.phone, 'העוזר פתח', act.title || act.url);
+  return act;
 }
 
 // ---------- דפדוף באתר ----------
@@ -246,6 +250,7 @@ async function searchMode(call) {
       return;
     }
     const res = await waitFor(call, ai.search(q));
+    logAnswer(call.phone, 'תשובת חיפוש', res.answer);
     let more = true;
     while (more) {
       const sr = await speak(call, res.answer);
@@ -498,6 +503,7 @@ async function handler(call) {
     return call.id_list_message([T('המספר שלך נחסם'), { type: 'go_to_folder', data: 'hangup' }]);
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
+  logAnswer(call.phone, 'שיחה התחילה', '', true);
   await call.id_list_message([T('שלום, הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אפס כדי לדבר עם העוזר. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
     const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });

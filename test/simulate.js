@@ -105,6 +105,32 @@ check('דף ההגדרות שומר מפתחות בקובץ בהרשאות 600',
 const file = path.join(process.env.DATA_DIR, 'users.json');
 check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file).mode & 0o777) === 0o600);
 
+// ---- אתר הניהול: תיקים, הוראות ושיחה עם ה-AI ----
+{
+  const crypto = await import('crypto');
+  const salt = crypto.randomBytes(16);
+  process.env.ADMIN_HASH = `${salt.toString('hex')}:${crypto.scryptSync('pass12345', salt, 64, { N: 16384, r: 8, p: 1 }).toString('hex')}`;
+  const form = (o) => ({ method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie }, body: new URLSearchParams(o) });
+  let cookie = '';
+  const login = await fetch(`${root}/admin/login`, form({ u: 'יהונתן', p: 'pass12345' }));
+  cookie = (login.headers.get('set-cookie') || '').split(';')[0];
+  check('ניהול: כניסה עם הסיסמה', login.status === 302 && cookie.startsWith('adm='));
+  const get = (u) => fetch(`${root}${u}`, { headers: { cookie } }).then((r) => r.text());
+  const home = await get('/admin');
+  check('ניהול: מספר מלא עם 0 ומופיע פעם אחת בלבד', home.includes('0501234567') && home.split('<b>0501234567</b>').length === 2);
+  const folder = await get('/admin/p/501234567');
+  check('ניהול: התיק מציג מה נאמר ומה ה-AI ענה, עם שעה', folder.includes('msg me') && folder.includes('msg bot') && folder.includes('מה זה אבטיח') && folder.includes('שיחה התחילה'));
+  await fetch(`${root}/admin/rules/add`, form({ text: 'אל תדבר על ספורט' }));
+  check('ניהול: הוראה נשמרה ונכנסת להנחיה של ה-AI', (await get('/admin/rules')).includes('אל תדבר על ספורט') && (await import('../src/rules.js')).rulesPrompt().includes('אל תדבר על ספורט'));
+  await fetch(`${root}/admin/chat`, form({ text: 'הוראה: ענה תמיד בקצרה' }));
+  const ch = await get('/admin/chat');
+  check('ניהול: שיחה עם ה-AI עונה ומוסיפה הוראה', ch.includes('הבנתי') && ch.includes('נוספה הוראה') && (await get('/admin/rules')).includes('ענה תמיד בקצרה'));
+  const noAuth = await fetch(`${root}/admin/p/501234567`);
+  check('ניהול: תיק לא נפתח בלי כניסה', !(await noAuth.text()).includes('msg bot'));
+  const blk = await fetch(`${root}/admin/block`, form({ p: '0501234567', back: '1' }));
+  check('ניהול: חסימה מתוך התיק חוזרת לתיק', blk.status === 302 && /\/admin\/p\/501234567/.test(blk.headers.get('location') || ''));
+}
+
 server.close();
 console.log(failures ? `\n${failures} בדיקות נכשלו` : '\nכל הבדיקות עברו');
 process.exit(failures ? 1 : 0);
