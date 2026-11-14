@@ -147,6 +147,16 @@ async function chatMode(call) {
   }
 }
 
+// פקודה קולית לסוכן. מחזיר את הפעולה שהסוכן הבין, או null אם לא נשמע דבר
+async function agentCommand(call, page) {
+  const cmd = await listen(call, 'העוזר החכם. אמור מה לעשות', 25, 'פקודה לסוכן');
+  if (!cmd) {
+    await speak(call, 'לא שמעתי');
+    return null;
+  }
+  return waitFor(call, ai.agent(page, cmd));
+}
+
 // ---------- דפדוף באתר ----------
 async function browse(call, startUrl) {
   const stack = [];
@@ -165,10 +175,35 @@ async function browse(call, startUrl) {
     await speak(call, `נפתח הדף ${page.title}`);
     let reading = true;
     let next = null;
+    // מבצע פעולה של הסוכן. מחזיר 'stay' כשנשארים בדף
+    const handleAct = async (act) => {
+      if (act.action === 'open') {
+        await speak(call, `נכנס ל${act.title}`);
+        stack.push(url);
+        next = act.url;
+        reading = false;
+      } else if (act.action === 'back') {
+        reading = false;
+      } else if (act.action === 'summary') {
+        await speak(call, await waitFor(call, ai.summarize(page.text)));
+      } else if (act.action === 'answer') {
+        await speak(call, act.text || 'אין לי תשובה');
+      } else if (act.action === 'read') {
+        return 'stay';
+      } else {
+        await speak(call, 'לא הצלחתי להבין או לבצע את הבקשה');
+      }
+      return 'done';
+    };
     while (reading) {
       const r = await speak(call, page.text);
       if (r === 'done') {
         await speak(call, 'סוף הדף');
+      } else if (r === 'stop') {
+        // לחיצה על 0 באמצע ההקראה פותחת את העוזר החכם
+        const act = await agentCommand(call, page);
+        if (act && (await handleAct(act)) === 'stay') continue;
+        if (!reading) break;
       }
       // תפריט דף
       const c = await ask(call, 'לסיכום הדף הקש 1, לקריאה מחדש 2, לקישורים בדף 3, לדבר עם הסוכן הקש 5, לחזרה אחורה 0', [0, 1, 2, 3, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
@@ -189,28 +224,8 @@ async function browse(call, startUrl) {
           }
         }
       } else if (c === '5') {
-        const cmd = await listen(call, 'אמור לסוכן מה לעשות בדף', 25, 'פקודה לסוכן');
-        if (!cmd) {
-          await speak(call, 'לא שמעתי');
-        } else {
-          const act = await waitFor(call, ai.agent(page, cmd));
-          if (act.action === 'open') {
-            await speak(call, `נכנס ל${act.title}`);
-            stack.push(url);
-            next = act.url;
-            reading = false;
-          } else if (act.action === 'back') {
-            reading = false;
-          } else if (act.action === 'summary') {
-            await speak(call, await waitFor(call, ai.summarize(page.text)));
-          } else if (act.action === 'answer') {
-            await speak(call, act.text || 'אין לי תשובה');
-          } else if (act.action === 'read') {
-            continue;
-          } else {
-            await speak(call, 'לא הצלחתי להבין או לבצע את הבקשה');
-          }
-        }
+        const act = await agentCommand(call, page);
+        if (act) await handleAct(act);
       } else if (c === '0') {
         reading = false;
       }
@@ -233,7 +248,18 @@ async function searchMode(call) {
     const res = await waitFor(call, ai.search(q));
     let more = true;
     while (more) {
-      await speak(call, res.answer);
+      const sr = await speak(call, res.answer);
+      if (sr === 'stop') {
+        const pseudo = { title: q, text: res.answer, links: res.sources.map((x) => ({ text: x.title, url: x.url })) };
+        const act = await agentCommand(call, pseudo);
+        if (act?.action === 'open') {
+          await speak(call, `נכנס ל${act.title}`);
+          await browse(call, act.url);
+          continue;
+        }
+        if (act?.action === 'summary' || act?.action === 'answer') await speak(call, act.action === 'answer' ? act.text || 'אין לי תשובה' : await waitFor(call, ai.summarize(res.answer)));
+        if (act?.action === 'read') continue;
+      }
       const opts = res.sources.length
         ? 'לשמיעת האתרים שנמצאו הקש 1, לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0'
         : 'לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0';
@@ -434,7 +460,7 @@ async function handler(call) {
     return call.id_list_message([T('המספר שלך נחסם'), { type: 'go_to_folder', data: 'hangup' }]);
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
-  await call.id_list_message([T('ברוכים הבאים. שימו לב, שאלות וחיפושים נרשמים לצורך אבטחה')], { prependToNextAction: true });
+  await call.id_list_message([T('שלום, הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אפס כדי לדבר עם העוזר. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
     const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
     if (d === '0') {
