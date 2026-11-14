@@ -15,7 +15,7 @@ await time('chat', ai.chat([], 'מה בירת צרפת?'));
 await time('chat2', ai.chat([], 'תן לי רעיון לארוחת ערב'));
 await time('search', ai.search('מי בנה את בית המקדש הראשון').then((r) => r.answer));
 await time('search-cache', ai.search('מי בנה את בית המקדש הראשון').then((r) => r.answer));
-await time('webAnswer', webAnswer('מה מזג האוויר היום בירושלים'));
+for (let i = 0; i < 3; i++) await time('webAnswer', webAnswer('מה מזג האוויר היום בירושלים'));
 await time('parallel5', Promise.all([1, 2, 3, 4, 5].map((i) => ai.chat([], `כמה זה ${i} ועוד ${i}?`))));
 console.log('PT keys', JSON.stringify(keyStats().map((k) => [k.tail.slice(-2), k.ok, k.fail, k.ms])));
 process.exit(0);

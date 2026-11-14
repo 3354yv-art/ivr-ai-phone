@@ -40,7 +40,7 @@ async function withKeys(fn) {
       last = e;
       note(k, false, 0);
       const m = String(e.message).match(/try again in ([\d.]+)(ms|s|m)/i);
-      const wait = m ? Number(m[1]) * ({ ms: 1, s: 1000, m: 60000 }[m[2].toLowerCase()]) : /HTTP 429/.test(e.message) ? 20000 : /HTTP 40[13]/.test(e.message) ? 3600000 : 3000;
+      const wait = m ? Number(m[1]) * ({ ms: 1, s: 1000, m: 60000 }[m[2].toLowerCase()]) : /HTTP 429/.test(e.message) ? 20000 : /HTTP 40[13]/.test(e.message) ? 3600000 : /HTTP 404/.test(e.message) ? 0 : 3000;
       rest.set(k, Date.now() + Math.min(wait + 500, 3600000));
     }
   }
@@ -130,12 +130,25 @@ async function hedged(names, run) {
 }
 
 // מודל של גרוק עם חיפוש אמיתי ברשת (רץ בשרתים של גרוק, לכן לא נחסם)
+let searchModels = null;
 export async function webAnswer(query, extraSys = '') {
   if (!allKeys().length) throw new Error('no keys');
-  return withKeys((k) => openai('https://api.groq.com/openai/v1', k, cfg.groqSearchModel, [
-    { role: 'system', content: SYSTEM + extraSys + ' חפש ברשת מידע עדכני וענה על סמך מה שמצאת.' },
-    { role: 'user', content: query },
-  ], 400, {}, cfg.searchTimeoutMs));
+  searchModels ||= [cfg.groqSearchModel, 'groq/compound', 'compound-beta-mini', 'compound-beta'].filter((m, i, a) => a.indexOf(m) === i);
+  let last;
+  for (const model of [...searchModels]) {
+    try {
+      return await withKeys((k) => openai('https://api.groq.com/openai/v1', k, model, [
+        { role: 'system', content: SYSTEM + extraSys + ' חפש ברשת מידע עדכני וענה על סמך מה שמצאת.' },
+        { role: 'user', content: query },
+      ], 400, {}, cfg.searchTimeoutMs));
+    } catch (e) {
+      last = e;
+      // מודל שלא קיים: לא מנסים אותו שוב
+      if (/HTTP 404|does not exist/.test(e.message)) searchModels = searchModels.filter((m) => m !== model);
+      else throw e;
+    }
+  }
+  throw last || new Error('no search model');
 }
 
 const order = () => cfg.chain.filter((n) => LLM[n]?.on());
