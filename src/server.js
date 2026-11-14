@@ -303,6 +303,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function providerFor(call) {
   const u = users.getUser(call.phone);
   if (u?.google?.refresh) return gmail.provider(u.google.refresh);
+  const app = users.getAppAccount(call.phone);
+  if (app) return mail.accountProvider(app.user, app.pass);
   if (u?.email && cfg.mailUser && u.email === cfg.mailUser.toLowerCase() && mail.mailEnabled()) return mail;
   return null;
 }
@@ -326,6 +328,42 @@ async function registerFlow(call) {
     return;
   }
   await speak(call, 'המייל שלך עדיין לא מחובר. נחבר אותו עכשיו');
+  const how = await ask(call, 'לחיבור מיידי בהקשת כתובת הג׳ימייל וסיסמת אפליקציה הקש 1, לקבלת קישור במייל הקש 2, לביטול הקש 0', [0, 1, 2], { sec_wait: 10, allow_empty: true, empty_val: '0' });
+  if (how === '1') return appPasswordFlow(call);
+  if (how !== '2') return;
+  return linkFlow(call);
+}
+
+// חיבור בהקשה: כתובת ג׳ימייל + סיסמת אפליקציה (16 אותיות). נבדק מול ג׳ימייל לפני שמירה
+async function appPasswordFlow(call) {
+  const kb = { typing_playback_mode: 'EmailKeyboard', min_digits: 1, sec_wait: 40, allow_empty: true, empty_val: 'None' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const typed = await call.read([T('הקש את כתובת הג׳ימייל שלך באנגלית, ובסיום הקש סולמית')], 'tap', kb);
+    if (!typed || typed === 'None') return;
+    const email = String(typed).trim().toLowerCase();
+    if (!/^[^\s@]+@(gmail|googlemail)\.com$/.test(email)) {
+      await speak(call, 'הכתובת צריכה להיות כתובת ג׳ימייל תקינה');
+      continue;
+    }
+    const pw = await call.read([T('עכשיו הקש את סיסמת האפליקציה, שש עשרה אותיות, ובסיום הקש סולמית')], 'tap', kb);
+    if (!pw || pw === 'None') return;
+    const pass = String(pw).replace(/\s/g, '').toLowerCase();
+    if (!/^[a-z]{16}$/.test(pass)) {
+      await speak(call, 'סיסמת אפליקציה היא שש עשרה אותיות באנגלית');
+      continue;
+    }
+    const ok = await waitFor(call, mail.verifyAccount(email, pass));
+    if (!ok) {
+      await speak(call, 'ההתחברות לג׳ימייל נכשלה. בדוק את הכתובת והסיסמה');
+      continue;
+    }
+    users.setAppPassword(call.phone, email, pass);
+    await speak(call, 'הג׳ימייל חובר בהצלחה. אפשר לשמוע את ההודעות מהתפריט הראשי בהקשת 3');
+    return;
+  }
+}
+
+async function linkFlow(call) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const typed = await call.read([T('הקש את כתובת המייל שלך באנגלית, ובסיום הקש סולמית')], 'tap', {
       typing_playback_mode: 'EmailKeyboard',
@@ -418,7 +456,7 @@ async function replyFlow(call, prov, m) {
 async function personalMode(call) {
   while (true) {
     const u = users.getUser(call.phone);
-    const state = u?.google?.refresh ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
+    const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const c = await ask(call, `האיזור האישי. ${state}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, לתפריט הראשי הקש 0`, [0, 1, 2], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
@@ -559,9 +597,27 @@ function addWebRoutes(app) {
     users.setEmailVerified(r.phone, r.email);
     const sid = users.createSession(r.phone);
     const g = gmail.googleEnabled()
-      ? `<p>עוד צעד אחד: לאשר לקו הטלפון לקרוא ולענות להודעות בג׳ימייל שלך.</p><a class="btn" href="/auth/google?s=${encodeURIComponent(sid)}">חבר את הג׳ימייל</a>`
-      : '<p>חיבור הג׳ימייל עדיין לא הופעל במערכת.</p>';
-    res.send(page('הטלפון חובר', `<p>הטלפון שלך חובר לכתובת ${esc(r.email)}.</p>${g}`));
+      ? `<p>עוד צעד אחד: לאשר לקו הטלפון לקרוא ולענות להודעות בג׳ימייל שלך.</p><a class="btn" href="/auth/google?s=${encodeURIComponent(sid)}">חבר את הג׳ימייל</a><hr>`
+      : '';
+    const f = `<p>אפשר גם לחבר בסיסמת אפליקציה של ג׳ימייל (שש עשרה אותיות, נוצרת בהגדרות החשבון של גוגל תחת "סיסמאות אפליקציה").</p>
+<form method="post" action="/connect/app"><input type="hidden" name="s" value="${esc(sid)}">
+<input name="email" type="email" value="${esc(r.email)}" dir="ltr" placeholder="Gmail" required>
+<input name="pass" type="password" dir="ltr" placeholder="סיסמת אפליקציה" autocomplete="off" required>
+<button class="btn" type="submit">חבר</button></form>`;
+    res.send(page('הטלפון חובר', `<p>הטלפון שלך חובר לכתובת ${esc(r.email)}.</p>${g}${f}`));
+  });
+  app.post('/connect/app', async (req, res) => {
+    const sess = users.getSession(String(req.body.s || ''));
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const pass = String(req.body.pass || '').replace(/\s/g, '').toLowerCase();
+    if (!sess) return res.status(400).send(page('הפעולה לא תקפה', '<p>חזור לקישור שבמייל.</p>'));
+    if (!/^[^\s@]+@(gmail|googlemail)\.com$/.test(email) || !/^[a-z]{16}$/.test(pass)) {
+      return res.status(400).send(page('פרטים לא תקינים', '<p>צריך כתובת ג׳ימייל וסיסמת אפליקציה בת שש עשרה אותיות. חזור אחורה ונסה שוב.</p>'));
+    }
+    if (!(await mail.verifyAccount(email, pass))) return res.status(400).send(page('ההתחברות נכשלה', '<p>ג׳ימייל לא קיבל את הפרטים. בדוק ונסה שוב.</p>'));
+    users.setAppPassword(sess.phone, email, pass);
+    users.dropSession(String(req.body.s));
+    res.send(page('הג׳ימייל חובר', '<p>הכל מוכן. אפשר לחזור לטלפון ולהקיש 3 כדי לשמוע את המייל.</p>'));
   });
   app.get('/auth/google', (req, res) => {
     const s = String(req.query.s || '');

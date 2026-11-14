@@ -58,7 +58,7 @@ const A = await drive('callA', [
   '1', 'מה זה אבטיח', '0',
   '2', '1', 'אבטיח', '1', '1', '3', '1', '0', '0', '0', '0',
   '2', '2', 'example.com', '0', '0', '0',
-  '3', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
+  '3', '2', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
   '0',
 ]);
 check('שיחה א: כל ההקשות נצרכו והשיחה נותקה כראוי', A.used === A.total && ended(A.transcript));
@@ -87,6 +87,11 @@ check('state לא מוכר נדחה', bad.status === 400);
 const B = await drive('callB', ['3', '1', '2', 'תודה רבה', '1', '3', '3', '0']);
 check('שיחה ב: המייל עובד ללא הרשמה נוספת', B.used === B.total && ended(B.transcript) && said(B.transcript, 'יש 2 הודעות'));
 check('שיחה ב: תשובה נשלחה דרך הג׳ימייל', (globalThis.__mockSent || []).some((x) => x.via === 'gmail' && x.body === 'תודה רבה'));
+
+// ---- חיבור בהקשה: כתובת + סיסמת אפליקציה ----
+const C = await drive('callC', ['4', '2', '1', 'dina@gmail.com', 'abcdefghijklmnop', '0', '0']);
+const acc = (await import('../src/users.js')).getAppAccount('0501234567');
+check('חיבור בהקשה: כתובת וסיסמת אפליקציה נשמרו (מוצפן)', C.used === C.total && acc?.user === 'dina@gmail.com' && acc?.pass === 'abcdefghijklmnop' && !fs.readFileSync(path.join(process.env.DATA_DIR || '.', 'users.json'), 'utf8').includes('abcdefghijklmnop'));
 
 // ---- אבטחה ----
 const t = (u) => fetch(u).then((r) => r.text());

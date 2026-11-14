@@ -24,6 +24,35 @@ export function setEmailVerified(phone, email) {
   db[k] = { ...(db[k] || {}), email: email.toLowerCase(), verifiedAt: Date.now() };
   save();
 }
+// סיסמת אפליקציה נשמרת מוצפנת (AES-256-GCM) במפתח מהשרת
+const dkey = () => crypto.createHash('sha256').update(`ivr-ai:${process.env.DATA_KEY || cfg.key || 'local'}`).digest();
+const enc = (t) => {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', dkey(), iv);
+  const d = Buffer.concat([c.update(t, 'utf8'), c.final()]);
+  return [iv, c.getAuthTag(), d].map((b) => b.toString('base64')).join('.');
+};
+const dec = (t) => {
+  const [iv, tag, d] = t.split('.').map((x) => Buffer.from(x, 'base64'));
+  const c = crypto.createDecipheriv('aes-256-gcm', dkey(), iv);
+  c.setAuthTag(tag);
+  return Buffer.concat([c.update(d), c.final()]).toString('utf8');
+};
+export function setAppPassword(phone, email, pass) {
+  const k = normPhone(phone);
+  db[k] = { ...(db[k] || {}), email: email.toLowerCase(), app: enc(pass), verifiedAt: Date.now() };
+  save();
+}
+export function getAppAccount(phone) {
+  const u = getUser(phone);
+  if (!u?.app || !u.email) return null;
+  try {
+    return { user: u.email, pass: dec(u.app) };
+  } catch {
+    return null;
+  }
+}
+
 export function setGoogle(phone, google) {
   const k = normPhone(phone);
   db[k] = { ...(db[k] || {}), email: google.email.toLowerCase(), google: { refresh: google.refresh }, verifiedAt: Date.now() };
