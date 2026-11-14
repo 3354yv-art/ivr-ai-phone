@@ -153,6 +153,23 @@ async function bing(query) {
   return out;
 }
 
+// ויקיפדיה בעברית: עובדת גם משרתים בענן (לא חוסמת), טובה לשאלות ידע
+export async function wiki(query) {
+  const u = `https://he.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=3&srprop=snippet&srsearch=${encodeURIComponent(query)}`;
+  const r = await fetch(u, { headers: { 'user-agent': 'ivr-ai-phone/1.0' }, signal: AbortSignal.timeout(2500) });
+  if (!r.ok) throw new Error(`wiki ${r.status}`);
+  const hits = (await r.json()).query?.search || [];
+  if (!hits.length) return [];
+  const ex = await fetch(`https://he.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&exchars=700&format=json&titles=${encodeURIComponent(hits.map((h) => h.title).join('|'))}`, { headers: { 'user-agent': 'ivr-ai-phone/1.0' }, signal: AbortSignal.timeout(2500) })
+    .then((x) => x.json()).catch(() => ({}));
+  const pages = Object.values(ex.query?.pages || {});
+  return hits.map((h) => ({
+    title: h.title,
+    url: `https://he.wikipedia.org/wiki/${encodeURIComponent(h.title.replace(/ /g, '_'))}`,
+    snippet: (pages.find((p) => p.title === h.title)?.extract || h.snippet.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim(),
+  }));
+}
+
 // מריץ את כל מנועי החיפוש במקביל ומחזיר את התוצאה הלא-ריקה הראשונה
 export async function ddg(query) {
   const engines = [ddgHtml, ddgLite, bing];

@@ -10,14 +10,39 @@ const SYSTEM = [
 ].join(' ');
 export { SYSTEM };
 
-// כמה מפתחות לאותו ספק: מחלקים עומס בסבב, ובכישלון מנסים את הבא
+// חלוקת עומס בין המפתחות: סבב הוגן, ומפתח שקיבל "יותר מדי בקשות" (429) או נכשל
+// נח בצד לזמן שגרוק ביקשה, כדי שהבקשות הבאות ילכו מיד למפתח פנוי ולא יחכו
 let rr = 0;
+const rest = new Map(); // key -> עד מתי לנוח
+const stats = new Map(); // key -> { ok, fail, ms }
+export const keyStats = () => [...stats.entries()].map(([k, v]) => ({ tail: k.slice(-4), ...v, resting: (rest.get(k) || 0) > Date.now() }));
+function note(k, ok, ms) {
+  const s = stats.get(k) || { ok: 0, fail: 0, ms: 0 };
+  if (ok) { s.ok++; s.ms = s.ms ? Math.round(s.ms * 0.8 + ms * 0.2) : ms; } else s.fail++;
+  stats.set(k, s);
+}
 async function withKeys(fn) {
-  const keys = allKeys();
+  const all = allKeys();
+  const now = Date.now();
+  let keys = all.filter((k) => (rest.get(k) || 0) <= now);
+  if (!keys.length) keys = all; // כולם נחים: מנסים בכל זאת
   const start = rr++ % keys.length;
   let last;
-  for (let i = 0; i < keys.length; i++) {
-    try { return await fn(keys[(start + i) % keys.length]); } catch (e) { last = e; }
+  // לכל היותר 3 מפתחות לבקשה, כדי לא לעבור את זמן התגובה
+  for (let i = 0; i < Math.min(keys.length, 3); i++) {
+    const k = keys[(start + i) % keys.length];
+    const t0 = Date.now();
+    try {
+      const v = await fn(k);
+      note(k, true, Date.now() - t0);
+      return v;
+    } catch (e) {
+      last = e;
+      note(k, false, 0);
+      const m = String(e.message).match(/try again in ([\d.]+)(ms|s|m)/i);
+      const wait = m ? Number(m[1]) * ({ ms: 1, s: 1000, m: 60000 }[m[2].toLowerCase()]) : /HTTP 429/.test(e.message) ? 20000 : /HTTP 40[13]/.test(e.message) ? 3600000 : 3000;
+      rest.set(k, Date.now() + Math.min(wait + 500, 3600000));
+    }
   }
   throw last;
 }
@@ -45,12 +70,12 @@ const LLM = {
   local: { on: () => true, call: (m, n) => ollama(m, n) },
 };
 
-async function openai(base, key, model, messages, max_tokens, extra = {}) {
+async function openai(base, key, model, messages, max_tokens, extra = {}, timeout = cfg.llmTimeoutMs) {
   const r = await fetch(`${base}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
     body: JSON.stringify({ model, messages, max_tokens, temperature: 0.4, ...extra }),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(timeout),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 160)}`);
   const t = ((await r.json()).choices?.[0]?.message?.content || '').trim();
@@ -102,6 +127,15 @@ async function hedged(names, run) {
     try { return await run('local'); } catch (e) { last = e; console.warn(`ספק local נכשל: ${e.message}`); }
   }
   throw new Error('BUSY', { cause: last });
+}
+
+// מודל של גרוק עם חיפוש אמיתי ברשת (רץ בשרתים של גרוק, לכן לא נחסם)
+export async function webAnswer(query, extraSys = '') {
+  if (!allKeys().length) throw new Error('no keys');
+  return withKeys((k) => openai('https://api.groq.com/openai/v1', k, cfg.groqSearchModel, [
+    { role: 'system', content: SYSTEM + extraSys + ' חפש ברשת מידע עדכני וענה על סמך מה שמצאת.' },
+    { role: 'user', content: query },
+  ], 400, {}, cfg.searchTimeoutMs));
 }
 
 const order = () => cfg.chain.filter((n) => LLM[n]?.on());

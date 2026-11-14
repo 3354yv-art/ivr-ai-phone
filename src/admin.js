@@ -6,6 +6,7 @@ import * as users from './users.js';
 import { poolList, removeByTail } from './pool.js';
 import { listRules, addRule, removeRule } from './rules.js';
 import { adminChat } from './ai.js';
+import { keyStats } from './llm.js';
 
 // ---------- יומן חיפושים וחסימות (נשמר בקבצים בשרת בלבד) ----------
 const logFile = () => path.join(cfg.dataDir, 'queries.jsonl');
@@ -204,7 +205,7 @@ export function addAdminRoutes(app) {
     const calls = recs.filter((r) => r.e).length;
     res.send(shell(`תיק ${showPhone(p)}`, `${nav}<div class="card"><h1 dir="ltr" style="text-align:right">${esc(showPhone(p))}</h1>
 <p>${calls} שיחות · ${recs.length - calls} פעולות · ${recs.length ? `ראשונה ${fmt(recs[0].t)} · אחרונה ${fmt(recs[recs.length - 1].t)}` : ''} ${isB ? '<span class="tag red">חסום</span>' : ''} ${db?.app || db?.google ? `<span class="tag green">מייל מחובר</span>` : ''}</p>${act}
-<p style="color:#666;font-size:13px">בכחול: מה שהמתקשר אמר. באפור: מה שה-AI ענה. תוכן מיילים לא נשמר ולא מוצג.</p></div>
+${db?.prefs?.length ? `<p><b>מה העוזר זוכר על המתקשר:</b> ${db.prefs.map(esc).join(' · ')}</p>` : ''}<p style="color:#666;font-size:13px">בכחול: מה שהמתקשר אמר. באפור: מה שה-AI ענה. תוכן מיילים לא נשמר ולא מוצג.</p></div>
 <div class="card">${body}</div>`));
   });
 
@@ -271,6 +272,7 @@ export function addAdminRoutes(app) {
     const connected = Object.keys(db).filter((p) => db[p]?.app || db[p]?.google);
     res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr"> <button class="red">חסום</button></form><br><table>${bl}</table></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
+<div class="card"><h2>מצב המפתחות (מאז ההפעלה)</h2><table><tr><th>מפתח</th><th>הצליחו</th><th>נכשלו</th><th>זמן תגובה ממוצע</th><th></th></tr>${keyStats().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td>${k.ok}</td><td>${k.fail}</td><td>${k.ms ? (k.ms / 1000).toFixed(1) + ' שנ׳' : '-'}</td><td>${k.resting ? '<span class="tag red">נח (מגבלת קצב)</span>' : '<span class="tag green">פעיל</span>'}</td></tr>`).join('') || '<tr><td>עדיין לא היו בקשות</td></tr>'}</table></div>
 <div class="card"><h2>מפתחות Groq שנתרמו (${poolList().length})</h2><p>מוצגות רק 4 ספרות אחרונות.</p><table>${poolList().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td><form method="post" action="/admin/pool-remove"><input type="hidden" name="t" value="${esc(k.tail)}"><button class="red">הסר</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>`));
   });
 

@@ -17,7 +17,10 @@ export const cfg = {
   cfToken: process.env.CLOUDFLARE_API_TOKEN || '',
   cfModel: process.env.CLOUDFLARE_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
   // סדר ניסיון הספקים. מוותרים אוטומטית על ספק בלי מפתח
-  hedgeMs: Number(process.env.HEDGE_MS || 1200),
+  hedgeMs: Number(process.env.HEDGE_MS || 900),
+  llmTimeoutMs: Number(process.env.LLM_TIMEOUT_MS || 2800),
+  searchTimeoutMs: Number(process.env.SEARCH_TIMEOUT_MS || 6000),
+  groqSearchModel: process.env.GROQ_SEARCH_MODEL || 'groq/compound-mini',
   yemotStt: process.env.YEMOT_STT === '1',
   chain: (process.env.AI_CHAIN || 'groq,cerebras,cloudflare,local').split(',').map((x) => x.trim()),
   sttChain: (process.env.STT_CHAIN || 'groq,cloudflare,local').split(',').map((x) => x.trim()),

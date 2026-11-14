@@ -53,6 +53,23 @@ export function getAppAccount(phone) {
   }
 }
 
+// התאמה אישית: דברים שהמתקשר ביקש שהעוזר יזכור (עד 15)
+export const getPrefs = (phone) => getUser(phone)?.prefs || [];
+export function addPref(phone, text) {
+  const k = normPhone(phone);
+  const t = String(text || '').trim().slice(0, 300);
+  if (!k || !t) return false;
+  const prefs = [...(db[k]?.prefs || []), t].slice(-15);
+  db[k] = { ...(db[k] || {}), prefs };
+  save();
+  return true;
+}
+export function clearPrefs(phone) {
+  const k = normPhone(phone);
+  if (db[k]) { delete db[k].prefs; save(); }
+}
+export const personaOf = (phone) => getPrefs(phone).join('. ');
+
 export function setGoogle(phone, google) {
   const k = normPhone(phone);
   db[k] = { ...(db[k] || {}), email: google.email.toLowerCase(), google: { refresh: google.refresh }, verifiedAt: Date.now() };

@@ -93,6 +93,11 @@ const C = await drive('callC', ['4', '2', '1', 'dina@gmail.com', 'abcdefghijklmn
 const acc = (await import('../src/users.js')).getAppAccount('0501234567');
 check('חיבור בהקשה: כתובת וסיסמת אפליקציה נשמרו (מוצפן)', C.used === C.total && acc?.user === 'dina@gmail.com' && acc?.pass === 'abcdefghijklmnop' && !fs.readFileSync(path.join(process.env.DATA_DIR || '.', 'users.json'), 'utf8').includes('abcdefghijklmnop'));
 
+// ---- התאמה אישית ----
+const D = await drive('callD', ['4', '3', 'קוראים לי משה', '0', '1', 'תזכור שאני גר בירושלים', 'מה זה', '0', '0']);
+const prefs = (await import('../src/users.js')).getPrefs('0501234567');
+check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור" בשיחה', ended(D.transcript) && prefs.includes('קוראים לי משה') && prefs.includes('אני גר בירושלים'));
+
 // ---- אבטחה ----
 const t = (u) => fetch(u).then((r) => r.text());
 check('מפתח שגוי נחסם', /hangup/.test(await t(`${root}/ivr?key=wrong&ApiCallId=b1&ApiPhone=0501234567&ApiDID=1&ApiExtension=1`)));

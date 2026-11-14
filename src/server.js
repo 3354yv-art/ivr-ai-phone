@@ -132,7 +132,15 @@ async function chatMode(call) {
       if (!q) return;
       continue;
     }
-    const answer = await waitFor(call, ai.chat(history, q));
+    const mem = q.match(/^\s*(?:תזכור|תזכרי|זכור|זכרי|תרשום|תרשמי)\s*(?:ש|את זה ש|לי ש)?\s*(.{3,})$/);
+    if (mem && call.phone) {
+      users.addPref(call.phone, mem[1]);
+      logAnswer(call.phone, 'נשמר להתאמה אישית', mem[1]);
+      await speak(call, 'רשמתי, אזכור את זה בשיחות הבאות');
+      q = await listen(call, 'מה עוד תרצה לשאול', 25, 'שיחה עם AI');
+      continue;
+    }
+    const answer = await waitFor(call, ai.chat(history, q, users.personaOf(call.phone)));
     logAnswer(call.phone, 'תשובת AI', answer);
     history.push({ role: 'user', text: q }, { role: 'model', text: answer });
     if (history.length > 20) history.splice(0, 2);
@@ -249,7 +257,7 @@ async function searchMode(call) {
       if (c === '1') continue;
       return;
     }
-    const res = await waitFor(call, ai.search(q));
+    const res = await waitFor(call, ai.search(q, users.personaOf(call.phone)));
     logAnswer(call.phone, 'תשובת חיפוש', res.answer);
     let more = true;
     while (more) {
@@ -462,13 +470,30 @@ async function personalMode(call) {
   while (true) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
-    const c = await ask(call, `האיזור האישי. ${state}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, לתפריט הראשי הקש 0`, [0, 1, 2], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const np = users.getPrefs(call.phone).length;
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const mine = recentFor(call.phone, 3);
       await speak(call, mine.length ? mine.map((r, i) => `${i + 1}, ${r.q}`).join('. ') : 'עדיין אין חיפושים');
     } else if (c === '2') {
       await registerFlow(call);
+    } else if (c === '3') {
+      if (!call.phone) {
+        await speak(call, 'לא ניתן לשמור התאמה אישית משיחה ממספר חסוי');
+        continue;
+      }
+      const t = await listen(call, 'אמור מה העוזר צריך לדעת עליך או איך לענות לך. למשל: קוראים לי משה, או: תענה לי תמיד בקצרה', 30, 'התאמה אישית');
+      if (t) {
+        users.addPref(call.phone, t);
+        await speak(call, `רשמתי: ${t}`);
+      } else await speak(call, 'לא שמעתי');
+    } else if (c === '4') {
+      const p = users.getPrefs(call.phone);
+      await speak(call, p.length ? p.map((x, i) => `${i + 1}, ${x}`).join('. ') : 'העוזר עדיין לא זוכר עליך כלום');
+    } else if (c === '5') {
+      users.clearPrefs(call.phone);
+      await speak(call, 'נמחק');
     }
   }
 }

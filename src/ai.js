@@ -1,13 +1,19 @@
 // נקודת הכניסה ל-AI. כברירת מחדל: שרשרת גיבוי של ספקים (Groq, Cerebras, Cloudflare, מקומי).
 // AI_PROVIDER=gemini מפעיל את Gemini בלבד. במצב בדיקה (MOCK) נשאר המדמה.
 import * as gemini from './gemini.js';
-import { ddg } from './local.js';
+import { ddg, wiki } from './local.js';
 import { cfg } from './config.js';
-import { SYSTEM as BASE, complete, transcribeChain } from './llm.js';
+import { SYSTEM as BASE, complete, transcribeChain, webAnswer } from './llm.js';
 import { rulesPrompt, listRules } from './rules.js';
 
 // ההנחיה הבסיסית + הוראות המנהל (מתעדכן מיד כשהמנהל משנה)
-const sys = () => BASE + rulesPrompt();
+const sys = (persona = '') => BASE + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
+
+// מחכה עד ms; אם לא הסתיים מחזיר fallback (בלי לבטל)
+const within = (p, ms, fallback) => Promise.race([p.catch(() => fallback), new Promise((r) => setTimeout(() => r(fallback), ms))]);
+const cache = new Map();
+const cached = (k) => { const c = cache.get(k); return c && Date.now() - c.t < 10 * 60_000 ? c.v : null; };
+const remember = (k, v) => { cache.set(k, { t: Date.now(), v }); if (cache.size > 300) cache.delete(cache.keys().next().value); };
 
 const legacy = cfg.mock || cfg.aiProvider === 'gemini';
 
@@ -15,33 +21,41 @@ export async function transcribe(wav) {
   return legacy ? gemini.transcribe(wav) : transcribeChain(wav);
 }
 
-export async function chat(history, userText) {
+export async function chat(history, userText, persona = '') {
   if (legacy) return gemini.chat(history, userText);
   const messages = [
-    { role: 'system', content: sys() },
+    { role: 'system', content: sys(persona) },
     ...history.slice(-10).map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
     { role: 'user', content: userText },
   ];
   return (await complete(messages)) || 'לא הצלחתי לענות על זה';
 }
 
-export async function search(query) {
+// חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
+// תשובות זהות נשמרות 10 דקות כדי לענות מיד.
+export async function search(query, persona = '') {
   if (legacy) return gemini.search(query);
-  const results = await ddg(query);
-  if (!results.length) {
-    // אין תוצאות מהרשת: עונים מהידע של המודל
-    const a = await complete([
-      { role: 'system', content: sys() },
-      { role: 'user', content: `ענה בקצרה על: ${query}` },
-    ]);
-    return { answer: a || 'לא מצאתי תוצאות', sources: [] };
+  const key = `${query}|${persona}`.trim().toLowerCase();
+  const hit = cached(key);
+  if (hit) return hit;
+  const [web, wk] = await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
+  const results = [...web.slice(0, 4), ...wk.slice(0, 2)];
+  let out;
+  if (results.length) {
+    const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet.slice(0, 500)}`).join('\n');
+    const answer = await complete([
+      { role: 'system', content: sys(persona) },
+      { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nענה בקצרה על סמך התוצאות. אם הן לא עונות על השאלה, ענה מהידע שלך.` },
+    ], 220);
+    out = { answer: answer || 'לא מצאתי תשובה', sources: results.map((x) => ({ title: x.title, url: x.url })) };
+  } else {
+    // אין תוצאות: חיפוש אמיתי ברשת דרך גרוק, ובמקביל תשובה מהידע של המודל כגיבוי מהיר
+    const know = complete([{ role: 'system', content: sys(persona) }, { role: 'user', content: `ענה בקצרה על: ${query}` }], 220).catch(() => '');
+    const live = await within(webAnswer(query, sys(persona).slice(BASE.length)), 4500, '');
+    out = { answer: live || (await know) || 'לא מצאתי תוצאות', sources: [] };
   }
-  const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet}`).join('\n');
-  const answer = await complete([
-    { role: 'system', content: sys() },
-    { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nענה בקצרה על סמך התוצאות.` },
-  ]);
-  return { answer: answer || 'לא מצאתי תשובה', sources: results.map((x) => ({ title: x.title, url: x.url })) };
+  remember(key, out);
+  return out;
 }
 
 export async function findSite(spoken) {
