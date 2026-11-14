@@ -1,6 +1,7 @@
 #!/bin/bash
 # בדיקת התאמה: האם אפשר להריץ דפדפן אמיתי (Chromium) בשרת, ומה גוגל עושה מולו
 set -u
+export PATH="$HOME/node/bin:$PATH"
 mkdir -p ~/bt && cd ~/bt
 [ -f package.json ] || npm init -y >/dev/null 2>&1
 npm i playwright >/dev/null 2>&1 || { echo "BT npm-fail"; exit 0; }
