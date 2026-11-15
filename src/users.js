@@ -96,6 +96,40 @@ export function clearPrefs(phone) {
   const k = normPhone(phone);
   if (db[k]) { delete db[k].prefs; save(); }
 }
+export function removePref(phone, i) {
+  const k = normPhone(phone);
+  if (db[k]?.prefs?.[i] === undefined) return;
+  db[k].prefs.splice(i, 1);
+  save();
+}
+export function disconnectMail(phone) {
+  const k = normPhone(phone);
+  if (!db[k]) return;
+  delete db[k].app;
+  delete db[k].google;
+  save();
+}
+
+// קוד כניסה לאיזור האישי באתר: הקו מקריא אותו למתקשר, וכך מוכח שהמספר שלו
+const webCodes = new Map(); // phone -> { code, until, tries }
+export function createWebCode(phone) {
+  const code = String(crypto.randomInt(100000, 1000000));
+  webCodes.set(normPhone(phone), { code, until: Date.now() + 15 * 60_000, tries: 0 });
+  return code;
+}
+export function checkWebCode(phone, code) {
+  const k = normPhone(phone);
+  const c = webCodes.get(k);
+  if (!c || Date.now() > c.until) return 'expired';
+  if (++c.tries > 5) {
+    webCodes.delete(k);
+    return 'expired';
+  }
+  if (c.code !== String(code).replace(/\D/g, '')) return 'wrong';
+  webCodes.delete(k);
+  return 'ok';
+}
+
 export const personaOf = (phone) => getPrefs(phone).join('. ');
 
 export function setGoogle(phone, google) {

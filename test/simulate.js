@@ -147,6 +147,23 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   setSetting('dailyLimit', 0);
 }
 
+// ---- איזור אישי באתר: קוד מהקו, כניסה, הוספת זיכרון ----
+{
+  const W = await drive('callW', ['4', '7', '0', '0']);
+  const m = W.transcript.join(' ').match(/הקוד שלך הוא:? ((?:\d, ){5}\d)/);
+  const code = m ? m[1].replace(/\D/g, '') : '';
+  check('אתר אישי: הקו מקריא קוד בן 6 ספרות', code.length === 6);
+  const bad = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0501234567', code: '000000' }) });
+  check('אתר אישי: קוד שגוי נדחה', (bad.headers.get('location') || '').includes('e=wrong'));
+  const ok = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '050-1234567', code }) });
+  const ck = (ok.headers.get('set-cookie') || '').split(';')[0];
+  await fetch(`${root}/my/pref`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ck }, body: new URLSearchParams({ t: 'אוהב תשובות קצרות' }) });
+  const pg = await (await fetch(`${root}/my`, { headers: { cookie: ck } })).text();
+  check('אתר אישי: כניסה, היסטוריה וזיכרון שנוסף', ck.startsWith('my=') && pg.includes('אוהב תשובות קצרות') && pg.includes('השיחות שלי') && pg.includes('0501234567'));
+  const again = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0501234567', code }) });
+  check('אתר אישי: קוד חד-פעמי', (again.headers.get('location') || '').includes('e='));
+}
+
 // ---- אבטחה ----
 const t = (u) => fetch(u).then((r) => r.text());
 check('מפתח שגוי נחסם', /hangup/.test(await t(`${root}/ivr?key=wrong&ApiCallId=b1&ApiPhone=0501234567&ApiDID=1&ApiExtension=1`)));

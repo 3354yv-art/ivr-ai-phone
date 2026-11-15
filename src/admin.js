@@ -68,6 +68,12 @@ function readLog(limit = 50000) {
   }
 }
 
+// ההיסטוריה של מספר אחד (לאיזור האישי באתר), מהישן לחדש
+export const historyFor = (phone, n = 150) => {
+  const k = norm(phone);
+  return readLog(20000).filter((r) => r.p === k && !r.e).slice(0, n).reverse();
+};
+
 // מספר מלא לתצוגה: 551234567 -> 0551234567
 export const showPhone = (p) => (/^\d{9}$/.test(p) && p[0] !== '0' ? `0${p}` : String(p || ''));
 

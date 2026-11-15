@@ -16,6 +16,7 @@ import { sendLoginEmail } from './notify.js';
 import { addPoolRoutes, allKeys, isDonor } from './pool.js';
 import { withCaller } from './ctx.js';
 import { getSetting } from './rules.js';
+import { addMyRoutes } from './my.js';
 import { addAdminRoutes, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
@@ -141,7 +142,10 @@ async function quotaOk(call) {
   return false;
 }
 
-const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מפורטות יותר, וזיכרון גדול יותר. כדי להצטרף, תורמים מפתח חינמי של גרוק. נכנסים לכתובת ${(cfg.baseUrl || '').replace(/^https?:\/\//, '')} לוכסן donate, באנגלית, ושם יש הסבר של דקה איך להשיג מפתח. בטופס מזינים גם את מספר הטלפון שממנו מתקשרים, וההטבות מתחילות מיד`;
+// כתובת אתר כמו שאומרים אותה בטלפון: 129.159.151.3:6080 -> 129 נקודה 159 ... נקודתיים 6080
+const spokenSite = (p) => `${(cfg.baseUrl || '').replace(/^https?:\/\//, '').replace(/\./g, ' נקודה ').replace(/:/g, ' נקודתיים ')} לוכסן ${p}`;
+
+const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מפורטות יותר, וזיכרון גדול יותר. כדי להצטרף, תורמים מפתח חינמי של גרוק. נכנסים לכתובת ${spokenSite('donate')}, באנגלית, ושם יש הסבר של דקה איך להשיג מפתח. בטופס מזינים גם את מספר הטלפון שממנו מתקשרים, וההטבות מתחילות מיד`;
 
 // ---------- שלוחה 1: צ'אט ----------
 async function chatMode(call) {
@@ -714,7 +718,7 @@ async function personalMode(call) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
-    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const mine = recentFor(call.phone, 3);
@@ -734,6 +738,15 @@ async function personalMode(call) {
     } else if (c === '4') {
       const p = users.getPrefs(call.phone);
       await speak(call, p.length ? p.map((x, i) => `${i + 1}, ${x}`).join('. ') : 'העוזר עדיין לא זוכר עליך כלום');
+    } else if (c === '7') {
+      if (!call.phone) {
+        await speak(call, 'אי אפשר להיכנס לאתר משיחה ממספר חסוי');
+        continue;
+      }
+      const code = users.createWebCode(call.phone);
+      const spaced = code.split('').join(', ');
+      const site = spokenSite('my');
+      await speak(call, `הקוד שלך הוא: ${spaced}. אחזור שוב: ${spaced}. הקוד תקף לרבע שעה. נכנסים לאתר ${site}, באנגלית, ומזינים את מספר הטלפון ואת הקוד. שם אפשר לחבר מייל וחשבון בפורום, ולראות מה העוזר זוכר עליך`);
     } else if (c === '6') {
       await speak(call, isDonor(call.phone) ? 'אתה כבר מתומכי הקו ומקבל את כל ההטבות. תודה רבה' : donateInfo());
     } else if (c === '5') {
@@ -870,6 +883,7 @@ function addSetupRoutes(app) {
 function addWebRoutes(app) {
   addSetupRoutes(app);
   addAdminRoutes(app);
+  addMyRoutes(app);
   addPoolRoutes(app);
   app.use((_req, res, next) => {
     res.set({ 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
