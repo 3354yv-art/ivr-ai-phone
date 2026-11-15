@@ -11,6 +11,24 @@ process.env.GOOGLE_CLIENT_SECRET = 'y';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ivr-'));
 process.env.ENV_FILE = path.join(process.env.DATA_DIR, 'test.env');
 process.env.NO_RESTART = '1';
+// מוק של פורום NodeBB (מתמחים טופ)
+globalThis.__forum = { posted: [], chats: [] };
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (u, o = {}) => {
+  const url = String(u);
+  if (!url.startsWith('https://mitmachim.top')) return realFetch(u, o);
+  const p = url.slice('https://mitmachim.top'.length);
+  const ck = String(o.headers?.cookie || '');
+  const logged = ck.includes('express.sid=ok');
+  const J = (b, s = 200, h = {}) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', ...h } });
+  if (p.startsWith('/api/config')) return J({ csrf_token: 'tok', uid: logged ? 7 : 0, username: logged ? 'יודע ומייבין' : undefined, userslug: 'yodea' });
+  if (p === '/login') return new URLSearchParams(o.body).get('password') === 'goodpass' ? J({}, 200, { 'set-cookie': 'express.sid=ok; Path=/' }) : J({ message: 'invalid-login-credentials' }, 403);
+  if (p.startsWith('/api/unread') || p.startsWith('/api/recent')) return J({ topics: [{ tid: 5, title: 'איך מתקינים אנקר', user: { username: 'משה' }, postcount: 2, lastposttimeISO: new Date().toISOString() }] });
+  if (p.startsWith('/api/topic/5')) return J({ tid: 5, title: 'איך מתקינים אנקר', posts: [{ pid: 1, user: { username: 'משה' }, timestampISO: new Date().toISOString(), content: '<p>מישהו יודע איך מתקינים?</p>' }, { pid: 2, user: { username: 'דוד' }, timestampISO: new Date().toISOString(), content: '<p>מורידים מהקישור</p>' }] });
+  if (p === '/api/v3/topics/5' && o.method === 'POST') { if (!logged || o.headers['x-csrf-token'] !== 'tok') return J({}, 403); globalThis.__forum.posted.push(JSON.parse(o.body).content); return J({ response: { pid: 3 } }); }
+  if (p === '/api/v3/chats') return J({ response: { rooms: [{ roomId: 1, roomName: 'שמעון', unread: true, teaser: { content: 'שלום' } }] } });
+  return J({}, 404);
+};
 const { createApp } = await import('../src/server.js');
 
 const server = createApp().listen(0);
@@ -56,8 +74,8 @@ const ended = (t) => t.some((l) => /(go_to_folder=|g-)hangup/.test(l) && !l.incl
 // ---- שיחה א: צ'אט, חיפוש, אתר, ואז מייל כשעדיין לא רשום -> הרשמה ----
 const A = await drive('callA', [
   '1', 'מה זה אבטיח', '0',
-  '2', '1', 'אבטיח', '1', '1', '3', '1', '0', '0', '0', '0',
-  '2', '2', 'example.com', '0', '0', '0',
+  '2', '1', 'אבטיח', '1', '1', 'תסכם לי', 'תחזור אחורה', '0',
+  '2', 'example.com', 'תחזור', '0', '0',
   '3', '2', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
   '0',
 ]);
@@ -97,6 +115,23 @@ check('חיבור בהקשה: כתובת וסיסמת אפליקציה נשמר�
 const D = await drive('callD', ['4', '3', 'קוראים לי משה', '0', '1', 'תזכור שאני גר בירושלים', 'מה זה', '0', '0']);
 const prefs = (await import('../src/users.js')).getPrefs('0501234567');
 check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור" בשיחה', ended(D.transcript) && prefs.includes('קוראים לי משה') && prefs.includes('אני גר בירושלים'));
+
+// ---- פורום: חיבור חשבון מאתר הניהול, קריאה ותגובה בקו ----
+{
+  const crypto = await import('crypto');
+  const salt = crypto.randomBytes(16);
+  process.env.ADMIN_HASH = `${salt.toString('hex')}:${crypto.scryptSync('pass12345', salt, 64, { N: 16384, r: 8, p: 1 }).toString('hex')}`;
+  const lg = await fetch(`${root}/admin/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ u: 'יהונתן', p: 'pass12345' }) });
+  const cookie = (lg.headers.get('set-cookie') || '').split(';')[0];
+  const post = (o) => fetch(`${root}/admin/site-account`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie }, body: new URLSearchParams(o) });
+  const bad = await post({ p: '0501234567', host: 'mitmachim.top', u: 'yodea', pw: 'wrong' });
+  check('פורום: סיסמה שגויה נדחית ולא נשמרת', decodeURIComponent(bad.headers.get('location') || '').includes('נכשל') && !(await import('../src/users.js')).getSiteAccount('0501234567', 'mitmachim.top'));
+  const ok = await post({ p: '0501234567', host: 'mitmachim.top', u: 'yodea', pw: 'goodpass' });
+  check('פורום: חיבור החשבון מאתר הניהול', decodeURIComponent(ok.headers.get('location') || '').includes('מחובר') && !fs.readFileSync(path.join(process.env.DATA_DIR, 'users.json'), 'utf8').includes('goodpass'));
+  const F = await drive('callF', ['2', '3', 'תפתח 1', 'תגיב שתודה רבה על העזרה', '1', 'צ׳אטים', '', '', '0', '0', '0']);
+  check('פורום: נכנס בחשבון, הקריא נושא ופרסם תגובה אחרי אישור', said(F.transcript, 'בחשבון יודע ומייבין') && said(F.transcript, 'מישהו יודע איך מתקינים') && globalThis.__forum.posted.includes('תודה רבה על העזרה'));
+  check('פורום: רשימת צ׳אטים מוקראת', said(F.transcript, 'שמעון') && F.used === F.total && ended(F.transcript));
+}
 
 // ---- אבטחה ----
 const t = (u) => fetch(u).then((r) => r.text());

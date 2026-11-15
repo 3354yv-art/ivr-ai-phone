@@ -7,6 +7,8 @@ import { poolList, removeByTail } from './pool.js';
 import { listRules, addRule, removeRule } from './rules.js';
 import { adminChat } from './ai.js';
 import { keyStats } from './llm.js';
+import { Forum, FORUMS, dropForum } from './nodebb.js';
+import { setSiteAccount, removeSiteAccount, siteAccounts } from './users.js';
 
 // ---------- יומן חיפושים וחסימות (נשמר בקבצים בשרת בלבד) ----------
 const logFile = () => path.join(cfg.dataDir, 'queries.jsonl');
@@ -130,6 +132,17 @@ function folders() {
   return [...by.values()].sort((a, b) => b.last - a.last);
 }
 
+function accountsCard(p, msg) {
+  const acc = siteAccounts(p);
+  const rows = Object.entries(FORUMS).map(([host, name]) => {
+    const a = acc.find((x) => x.host === host);
+    return a
+      ? `<p>${esc(name)}: מחובר בתור <b>${esc(a.username)}</b> <form method="post" action="/admin/site-account" style="display:inline"><input type="hidden" name="p" value="${esc(p)}"><input type="hidden" name="host" value="${esc(host)}"><input type="hidden" name="remove" value="1"><button class="red">נתק</button></form></p>`
+      : `<form method="post" action="/admin/site-account"><input type="hidden" name="p" value="${esc(p)}"><input type="hidden" name="host" value="${esc(host)}"><b>${esc(name)}:</b> <input name="u" placeholder="שם משתמש או מייל" autocomplete="off"> <input name="pw" type="password" placeholder="סיסמה" autocomplete="new-password"> <button>חבר</button></form>`;
+  }).join('');
+  return `<div class="card"><h2>חשבונות באתרים</h2>${msg ? `<p style="color:#1a73e8">${esc(msg)}</p>` : ''}${rows}<p style="color:#666;font-size:13px">הסיסמה נבדקת מול האתר ונשמרת מוצפנת בשרת. היא לא מוצגת כאן ולא נשמרת ביומן. כך העוזר בקו יוכל לקרוא, לכתוב פוסטים ולקרוא צ'אטים בחשבון הזה.</p></div>`;
+}
+
 // היסטוריית השיחה של המנהל עם ה-AI (נשמרת בשרת)
 const chatFile = () => path.join(cfg.dataDir, 'admin-chat.json');
 let adminHist = [];
@@ -206,7 +219,33 @@ export function addAdminRoutes(app) {
     res.send(shell(`תיק ${showPhone(p)}`, `${nav}<div class="card"><h1 dir="ltr" style="text-align:right">${esc(showPhone(p))}</h1>
 <p>${calls} שיחות · ${recs.length - calls} פעולות · ${recs.length ? `ראשונה ${fmt(recs[0].t)} · אחרונה ${fmt(recs[recs.length - 1].t)}` : ''} ${isB ? '<span class="tag red">חסום</span>' : ''} ${db?.app || db?.google ? `<span class="tag green">מייל מחובר</span>` : ''}</p>${act}
 ${db?.prefs?.length ? `<p><b>מה העוזר זוכר על המתקשר:</b> ${db.prefs.map(esc).join(' · ')}</p>` : ''}<p style="color:#666;font-size:13px">בכחול: מה שהמתקשר אמר. באפור: מה שה-AI ענה. תוכן מיילים לא נשמר ולא מוצג.</p></div>
-<div class="card">${body}</div>`));
+${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}</div>`));
+  });
+
+  // חיבור חשבון פורום למספר: הסיסמה נבדקת מול הפורום, ונשמרת מוצפנת. לא מוצגת אף פעם
+  app.post('/admin/site-account', async (req, res) => {
+    if (!gate(req, res)) return;
+    const p = norm(req.body?.p);
+    const host = String(req.body?.host || '');
+    const back = (m) => res.redirect(`/admin/p/${encodeURIComponent(p)}?m=${encodeURIComponent(m)}`);
+    if (!FORUMS[host] || p.length < 9) return back('פרטים לא תקינים');
+    if (req.body?.remove) {
+      removeSiteAccount(p, host);
+      dropForum(p, host);
+      return back('החשבון נותק');
+    }
+    const u = String(req.body?.u || '').trim();
+    const pw = String(req.body?.pw || '');
+    if (!u || !pw) return back('צריך שם משתמש וסיסמה');
+    try {
+      const f = new Forum(host);
+      const me = await f.login(u, pw);
+      setSiteAccount(p, host, u, pw);
+      dropForum(p, host);
+      back(`מחובר בהצלחה בתור ${me.username || u}`);
+    } catch (e) {
+      back(`החיבור נכשל: ${String(e.message).slice(0, 150)}`);
+    }
   });
 
   // ---- הוראות ל-AI ----

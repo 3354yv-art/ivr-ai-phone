@@ -8,6 +8,7 @@ import * as ai from './ai.js';
 import { warmUp as llmWarm } from './llm.js';
 import { downloadRecording, deleteRecording, tokenFor } from './yemot.js';
 import { fetchPage } from './web.js';
+import { forumFor, dropForum, isForumHost, FORUMS, ago } from './nodebb.js';
 import * as mail from './mail.js';
 import * as gmail from './gmail.js';
 import * as users from './users.js';
@@ -98,7 +99,7 @@ async function listenRaw(call, prompt, maxLen = 25) {
   return (await waitFor(call, job)).trim();
 }
 
-// מקריא טקסט בקטעים. 0 = עצירה, 4 = אחורה, 6 = דילוג
+// מקריא טקסט בקטעים. 1 או 0 = עצירה, 4 = אחורה, 6 = דילוג
 async function speak(call, text) {
   const parts = chunk(text);
   if (!parts.length) {
@@ -113,9 +114,9 @@ async function speak(call, text) {
       sec_wait: 1,
       allow_empty: true,
       empty_val: 'None',
-      digits_allowed: [0, 4, 6],
+      digits_allowed: [0, 1, 4, 6],
     });
-    if (k === '0') return 'stop';
+    if (k === '0' || k === '1') return 'stop';
     if (k === '4') i = Math.max(0, i - 1);
     else i += 1;
   }
@@ -157,94 +158,308 @@ async function chatMode(call) {
 }
 
 // פקודה קולית לסוכן. מחזיר את הפעולה שהסוכן הבין, או null אם לא נשמע דבר
-async function agentCommand(call, page) {
+async function agentCommand(call, page, history = []) {
   const cmd = await listen(call, 'העוזר החכם. אמור מה לעשות', 25, 'פקודה לסוכן');
   if (!cmd) {
     await speak(call, 'לא שמעתי');
     return null;
   }
-  const act = await waitFor(call, ai.agent(page, cmd));
+  const act = await waitFor(call, ai.agent(page, cmd, history, users.personaOf(call.phone)));
   if (act?.action === 'answer') logAnswer(call.phone, 'תשובת העוזר', act.text);
   else if (act?.action === 'open') logAnswer(call.phone, 'העוזר פתח', act.title || act.url);
   return act;
 }
 
-// ---------- דפדוף באתר ----------
+// ---------- דפדוף באתר: שיחה עם עוזר על הדף ----------
+const hostOf = (u) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+};
+
+// מאזין לבקשה. אחרי שתי שתיקות מציע תפריט מקשים קצר. מחזיר טקסט, או null ליציאה
+async function hear(call, prompt, kind) {
+  for (let miss = 0; miss < 2; miss++) {
+    const t = await listen(call, miss ? 'לא שמעתי, אפשר לומר שוב' : prompt, 25, kind);
+    if (t) return t;
+  }
+  const c = await ask(call, 'לא שמעתי. כדי לומר משהו הקש 1, ליציאה הקש 0', [0, 1], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+  return c === '1' ? hear(call, prompt, kind) : null;
+}
+
 async function browse(call, startUrl) {
+  if (isForumHost(hostOf(startUrl))) return forumMode(call, hostOf(startUrl));
+  const persona = users.personaOf(call.phone);
   const stack = [];
   let url = startUrl;
   while (url) {
+    if (isForumHost(hostOf(url))) {
+      await forumMode(call, hostOf(url));
+      url = stack.pop() ?? null;
+      continue;
+    }
     let page;
     try {
       page = await waitFor(call, fetchPage(url));
     } catch (e) {
       if (isControl(e)) throw e;
       console.error('fetchPage', url, e.message);
-      await speak(call, 'לא הצלחתי לפתוח את האתר');
+      await speak(call, 'לא הצלחתי לפתוח את הדף');
       url = stack.pop() ?? null;
       continue;
     }
-    await speak(call, `נפתח הדף ${page.title}`);
-    let reading = true;
-    let next = null;
-    // מבצע פעולה של הסוכן. מחזיר 'stay' כשנשארים בדף
-    const handleAct = async (act) => {
+    const history = [];
+    const guide = await waitFor(call, ai.pageGuide(page, persona));
+    history.push({ role: 'model', text: guide });
+    await speak(call, guide);
+    let next;
+    while (next === undefined) {
+      const cmd = await hear(call, 'אני מקשיב', 'פקודה לסוכן');
+      if (cmd === null) {
+        next = stack.pop() ?? null;
+        break;
+      }
+      const act = await waitFor(call, ai.agent(page, cmd, history, persona));
+      history.push({ role: 'user', text: cmd });
       if (act.action === 'open') {
+        logAnswer(call.phone, 'העוזר פתח', act.title || act.url);
+        history.push({ role: 'model', text: `נכנס ל${act.title}` });
         await speak(call, `נכנס ל${act.title}`);
         stack.push(url);
         next = act.url;
-        reading = false;
       } else if (act.action === 'back') {
-        reading = false;
-      } else if (act.action === 'summary') {
-        await speak(call, await waitFor(call, ai.summarize(page.text)));
-      } else if (act.action === 'answer') {
-        await speak(call, act.text || 'אין לי תשובה');
+        next = stack.pop() ?? null;
+        if (next === null) await speak(call, 'יוצא מהאתר');
       } else if (act.action === 'read') {
-        return 'stay';
-      } else {
-        await speak(call, 'לא הצלחתי להבין או לבצע את הבקשה');
-      }
-      return 'done';
-    };
-    while (reading) {
-      const r = await speak(call, page.text);
-      if (r === 'done') {
-        await speak(call, 'סוף הדף');
-      } else if (r === 'stop') {
-        // לחיצה על 0 באמצע ההקראה פותחת את העוזר החכם
-        const act = await agentCommand(call, page);
-        if (act && (await handleAct(act)) === 'stay') continue;
-        if (!reading) break;
-      }
-      // תפריט דף
-      const c = await ask(call, 'לסיכום הדף הקש 1, לקריאה מחדש 2, לקישורים בדף 3, לדבר עם הסוכן הקש 5, לחזרה אחורה 0', [0, 1, 2, 3, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
-      if (c === '1') {
+        const from = act.from ? page.text.indexOf(act.from) : -1;
+        history.push({ role: 'model', text: 'הקראתי את הדף' });
+        await speak(call, page.text.slice(Math.max(0, from)));
+        await speak(call, 'זהו. מה עוד?');
+      } else if (act.action === 'summary') {
         const s = await waitFor(call, ai.summarize(page.text));
+        history.push({ role: 'model', text: s });
         await speak(call, s);
-      } else if (c === '3') {
-        if (!page.links.length) {
-          await speak(call, 'לא נמצאו קישורים בדף');
-        } else {
-          const list = page.links.map((l, i) => `${i + 1}, ${l.text}`).join(', ');
-          const n = await ask(call, `הקש את מספר הקישור שתרצה לפתוח. ${list}`, page.links.map((_, i) => i + 1), { sec_wait: 10, allow_empty: true, empty_val: '0' });
-          const link = page.links[Number(n) - 1];
-          if (link) {
-            stack.push(url);
-            next = link.url;
-            reading = false;
-          }
-        }
-      } else if (c === '5') {
-        const act = await agentCommand(call, page);
-        if (act) await handleAct(act);
-      } else if (c === '0') {
-        reading = false;
+      } else if (act.action === 'search' && act.query) {
+        const res = await waitFor(call, ai.search(act.query, persona));
+        history.push({ role: 'model', text: res.answer });
+        await speak(call, res.answer);
+      } else {
+        const t = act.text || 'לא הבנתי, אפשר לומר במילים אחרות?';
+        logAnswer(call.phone, 'תשובת העוזר', t);
+        history.push({ role: 'model', text: t });
+        await speak(call, t);
       }
-      // c === '2' - קוראים שוב
     }
-    url = next ?? (stack.length && !next ? stack.pop() : null);
-    if (!next && !url) break;
+    url = next;
+  }
+}
+
+// ---------- פורום (מתמחים טופ ודומיו): קריאה, כתיבה, צ'אטים ----------
+const nums = ['אחד', 'שתיים', 'שלוש', 'ארבע', 'חמש', 'שש', 'שבע', 'שמונה', 'תשע', 'עשר', 'אחת עשרה', 'שתים עשרה'];
+
+async function confirm(call, what) {
+  const c = await ask(call, `${what}. לשליחה הקש 1, לביטול הקש 2`, [1, 2], { sec_wait: 10, allow_empty: true, empty_val: '2' });
+  return c === '1';
+}
+
+async function forumMode(call, host) {
+  const name = FORUMS[host] || host;
+  const persona = users.personaOf(call.phone);
+  const creds = call.phone ? users.getSiteAccount(call.phone, host) : null;
+  let f;
+  try {
+    f = await waitFor(call, forumFor(call.phone || 'x', host, creds));
+  } catch (e) {
+    if (isControl(e)) throw e;
+    console.error('forum', host, e.message);
+    if (creds) {
+      await speak(call, `לא הצלחתי להתחבר לחשבון שלך ב${name}. ${/סיסמה|נכשלה/.test(e.message) ? 'כנראה שם המשתמש או הסיסמה השתנו' : 'האתר לא ענה'}. נכנס כאורח`);
+      try {
+        f = await waitFor(call, forumFor(call.phone || 'x', host, null));
+      } catch (e2) {
+        if (isControl(e2)) throw e2;
+      }
+    }
+    if (!f) {
+      await speak(call, `לא הצלחתי להיכנס ל${name} כרגע`);
+      return;
+    }
+  }
+  const state = { forum: name, where: 'דף ראשי', list: [], detail: '' };
+  let items = [];
+  let kind = 'topics'; // topics | chats
+  let topic = null;
+  let pos = 0;
+  let room = null;
+  const history = [];
+  const say = async (t) => {
+    history.push({ role: 'model', text: t.slice(0, 400) });
+    return speak(call, t);
+  };
+  const needLogin = async () => {
+    if (f.loggedIn) return false;
+    await say(`בשביל זה צריך לחבר את החשבון שלך ב${name}. אפשר לחבר אותו מאתר הניהול`);
+    return true;
+  };
+  const showTopics = async (list, title) => {
+    items = list;
+    kind = 'topics';
+    state.where = title;
+    state.list = list.map((t) => `${t.title} (מאת ${t.by}, ${t.posts} הודעות, ${ago(t.last)}${t.cat ? `, ב${t.cat}` : ''})`);
+    if (!list.length) return say(`אין כרגע ${title}`);
+    const top = list.slice(0, 7).map((t, i) => `${nums[i]}: ${t.title}, של ${t.by}, ${ago(t.last)}`).join('. ');
+    return say(`${title}. ${top}. איזה נושא לפתוח?`);
+  };
+  const readPosts = async (n) => {
+    const part = topic.posts.slice(pos, pos + n);
+    if (!part.length) return say('אין עוד הודעות בנושא. אפשר להגיב, או לבקש נושאים אחרים');
+    pos += part.length;
+    const txt = part.map((p) => `${p.by} כתב ${ago(p.at)}: ${p.text}`).join('. ');
+    const left = topic.posts.length - pos;
+    const r = await say(`${txt}. ${left > 0 ? `יש עוד ${left} תגובות. להמשך אמור תמשיך` : 'זה הכל בנושא. אפשר להגיב'}`);
+    return r;
+  };
+
+  await say(f.loggedIn ? `נכנסת ל${name}, בחשבון ${f.user.username}` : `נכנסת ל${name} כאורח. כדי לכתוב ולקרוא צ'אטים צריך לחבר את החשבון מאתר הניהול`);
+  try {
+    await showTopics(await waitFor(call, f.topics(f.loggedIn ? 'unread' : 'recent')), f.loggedIn ? 'נושאים שלא קראת' : 'הנושאים האחרונים');
+  } catch (e) {
+    if (isControl(e)) throw e;
+    await say('לא הצלחתי לטעון את הנושאים');
+  }
+
+  while (true) {
+    const cmd = await hear(call, 'מה לעשות?', `פורום ${name}`);
+    if (cmd === null) return;
+    history.push({ role: 'user', text: cmd });
+    const act = await waitFor(call, ai.forumAgent(state, cmd, history, persona));
+    try {
+      switch (act.action) {
+        case 'recent':
+        case 'popular':
+          await showTopics(await waitFor(call, f.topics(act.action)), act.action === 'popular' ? 'הנושאים החמים' : 'הנושאים האחרונים');
+          break;
+        case 'unread':
+          if (await needLogin()) break;
+          await showTopics(await waitFor(call, f.topics('unread')), 'נושאים שלא קראת');
+          break;
+        case 'search': {
+          const r = await waitFor(call, f.searchPosts(act.query || cmd));
+          await showTopics(r.map((x) => ({ ...x, posts: '', last: '', cat: '' })), `תוצאות חיפוש על ${act.query || cmd}`);
+          break;
+        }
+        case 'open': {
+          const it = items[Number(act.index) - 1];
+          if (!it) {
+            await say('לא מצאתי פריט כזה ברשימה');
+            break;
+          }
+          if (kind === 'chats') {
+            room = it;
+            const msgs = await waitFor(call, f.chatMessages(it.roomId));
+            state.where = `צ'אט עם ${it.name}`;
+            state.detail = msgs.map((m) => `${m.mine ? 'אני' : m.by}: ${m.text}`).join('\n');
+            logAnswer(call.phone, 'פורום: צ׳אט', it.name);
+            await say(msgs.length ? `הצ'אט עם ${it.name}. ${msgs.slice(-8).map((m) => `${m.mine ? 'אתה כתבת' : `${m.by} כתב`} ${ago(m.at)}: ${m.text}`).join('. ')}. אפשר להגיד מה לענות` : `הצ'אט עם ${it.name} ריק. מה לכתוב?`);
+          } else {
+            topic = await waitFor(call, f.topic(it.tid));
+            pos = 0;
+            state.where = `נושא: ${topic.title}`;
+            state.detail = topic.posts.map((p) => `${p.by}: ${p.text}`).join('\n');
+            logAnswer(call.phone, 'פורום: נכנס לנושא', topic.title);
+            await say(`${topic.title}. ${topic.posts.length} הודעות`);
+            await readPosts(3);
+          }
+          break;
+        }
+        case 'more':
+          if (topic) await readPosts(3);
+          else await say('אין נושא פתוח');
+          break;
+        case 'summary':
+          if (topic) await say(await waitFor(call, ai.narrate('סכם למתקשר בקצרה ובשפה מדוברת את הדיון הזה בפורום: על מה שואלים, מה ענו, והאם נפתרה הבעיה.', state.detail, persona)));
+          else await say('אין נושא פתוח לסכם');
+          break;
+        case 'reply': {
+          if (await needLogin()) break;
+          if (!topic) {
+            await say('קודם צריך לפתוח נושא כדי להגיב בו');
+            break;
+          }
+          if (!act.text) {
+            await say('מה לכתוב בתגובה?');
+            break;
+          }
+          if (await confirm(call, `התגובה שתישלח לנושא ${topic.title}: ${act.text}`)) {
+            await waitFor(call, f.reply(topic.tid, act.text));
+            logAnswer(call.phone, 'פורום: נשלחה תגובה', `${topic.title}: ${act.text}`);
+            await say('התגובה פורסמה');
+          } else await say('בוטל. מה לשנות?');
+          break;
+        }
+        case 'new_topic': {
+          if (await needLogin()) break;
+          const cats = await waitFor(call, f.categories());
+          let cat = cats.find((c) => act.category && (c.name.includes(act.category) || act.category.includes(c.name)));
+          if (!cat) {
+            const list = cats.slice(0, 9);
+            const n = await ask(call, `באיזו קטגוריה? ${list.map((c, i) => `${c.name} הקש ${i + 1}`).join(', ')}`, list.map((_, i) => i + 1), { sec_wait: 10, allow_empty: true, empty_val: '0' });
+            cat = list[Number(n) - 1];
+          }
+          if (!cat || !act.title || !act.text) {
+            await say('לא היה לי מספיק מידע כדי לפתוח נושא. אמור מה הכותרת ומה לכתוב');
+            break;
+          }
+          if (await confirm(call, `נושא חדש בקטגוריה ${cat.name}. הכותרת: ${act.title}. התוכן: ${act.text}`)) {
+            await waitFor(call, f.newTopic(cat.cid, act.title, act.text));
+            logAnswer(call.phone, 'פורום: נפתח נושא', `${act.title}: ${act.text}`);
+            await say('הנושא פורסם');
+          } else await say('בוטל. מה לשנות?');
+          break;
+        }
+        case 'chats': {
+          if (await needLogin()) break;
+          const rooms = await waitFor(call, f.chats());
+          items = rooms;
+          kind = 'chats';
+          state.where = 'רשימת צ׳אטים';
+          state.list = rooms.map((r) => `${r.name}${r.unread ? ' (חדש)' : ''}: ${r.last.slice(0, 60)}`);
+          await say(rooms.length ? `יש לך ${rooms.length} צ'אטים. ${rooms.slice(0, 7).map((r, i) => `${nums[i]}: ${r.name}${r.unread ? ', יש הודעה חדשה' : ''}`).join('. ')}. איזה לפתוח?` : 'אין לך צ׳אטים');
+          break;
+        }
+        case 'send_chat': {
+          if (await needLogin()) break;
+          if (!room) {
+            await say('קודם צריך לפתוח צ׳אט');
+            break;
+          }
+          if (act.text && (await confirm(call, `ההודעה ל${room.name}: ${act.text}`))) {
+            await waitFor(call, f.sendChat(room.roomId, act.text));
+            logAnswer(call.phone, 'פורום: נשלחה הודעה', `${room.name}: ${act.text}`);
+            await say('נשלח');
+          } else await say('לא נשלח');
+          break;
+        }
+        case 'notifications': {
+          if (await needLogin()) break;
+          const ns = await waitFor(call, f.notifications());
+          await say(ns.length ? ns.slice(0, 6).map((n) => `${n.read ? '' : 'חדש: '}${n.text}, ${ago(n.at)}`).join('. ') : 'אין התראות');
+          break;
+        }
+        case 'exit':
+          await speak(call, `יוצא מ${name}`);
+          return;
+        default:
+          await say(act.text || 'לא הבנתי, אפשר לומר במילים אחרות?');
+      }
+    } catch (e) {
+      if (isControl(e)) throw e;
+      console.error('forum action', act.action, e.message);
+      await say(/נכשל/.test(e.message) ? e.message : 'משהו השתבש מול הפורום, נסה שוב');
+      if (/401|403/.test(e.message)) dropForum(call.phone || 'x', host);
+    }
   }
 }
 
@@ -298,7 +513,7 @@ async function siteMode(call) {
       if (c === '1') continue;
       return;
     }
-    const url = await waitFor(call, ai.findSite(name));
+    const url = /מתמחים|mitmachim/i.test(name) ? 'https://mitmachim.top' : await waitFor(call, ai.findSite(name));
     if (!url) {
       await speak(call, 'לא מצאתי את האתר');
       continue;
@@ -501,9 +716,10 @@ async function personalMode(call) {
 // ---------- חיפוש וכניסה לאתרים ----------
 async function webMode(call) {
   while (true) {
-    const c = await ask(call, 'לחיפוש בגוגל הקש 1, לכניסה לאתר לפי שם הקש 2, לתפריט הראשי הקש 0', [0, 1, 2], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, 'לחיפוש בגוגל הקש 1, לכניסה לאתר לפי שם הקש 2, לפורום מתמחים טופ הקש 3, לתפריט הראשי הקש 0', [0, 1, 2, 3], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '1') await searchMode(call);
     else if (c === '2') await siteMode(call);
+    else if (c === '3') await forumMode(call, 'mitmachim.top');
     else return;
   }
 }
@@ -529,7 +745,7 @@ async function handler(call) {
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   logAnswer(call.phone, 'שיחה התחילה', '', true);
-  await call.id_list_message([T('שלום, הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אפס כדי לדבר עם העוזר. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
+  await call.id_list_message([T('שלום, הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אחת כדי לעצור הקראה ולומר לעוזר מה לעשות. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
     const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
     if (d === '0') {

@@ -53,6 +53,33 @@ export function getAppAccount(phone) {
   }
 }
 
+// חשבונות באתרים (כמו פורום מתמחים טופ). הסיסמה נשמרת מוצפנת
+export function setSiteAccount(phone, host, username, password) {
+  const k = normPhone(phone);
+  if (!k) return false;
+  const sites = { ...(db[k]?.sites || {}), [host]: { u: String(username), p: enc(String(password)), t: Date.now() } };
+  db[k] = { ...(db[k] || {}), sites };
+  save();
+  return true;
+}
+export function getSiteAccount(phone, host) {
+  const s = getUser(phone)?.sites?.[host];
+  if (!s) return null;
+  try {
+    return { username: s.u, password: dec(s.p) };
+  } catch {
+    return null;
+  }
+}
+export function removeSiteAccount(phone, host) {
+  const k = normPhone(phone);
+  if (db[k]?.sites?.[host]) {
+    delete db[k].sites[host];
+    save();
+  }
+}
+export const siteAccounts = (phone) => Object.entries(getUser(phone)?.sites || {}).map(([host, s]) => ({ host, username: s.u }));
+
 // התאמה אישית: דברים שהמתקשר ביקש שהעוזר יזכור (עד 15)
 export const getPrefs = (phone) => getUser(phone)?.prefs || [];
 export function addPref(phone, text) {

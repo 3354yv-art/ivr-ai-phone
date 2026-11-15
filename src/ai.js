@@ -75,25 +75,92 @@ export async function summarize(text) {
   return out || 'לא הצלחתי לסכם';
 }
 
-// סוכן הדף: מתרגם פקודה בעברית לפעולה על הדף שהמתקשר נמצא בו.
-// פועל על הטקסט והקישורים של הדף (לא לוחץ על כפתורי אתר שדורשים הרצת קוד).
-export async function agent(page, command) {
-  if (legacy) return { action: 'answer', text: 'הסוכן לא זמין במצב בדיקה' };
+const parseJson = (out) => {
+  try {
+    return JSON.parse(String(out).match(/\{[\s\S]*\}/)[0]);
+  } catch {
+    return null;
+  }
+};
+const histText = (h) => (h || []).slice(-6).map((x) => `${x.role === 'user' ? 'המתקשר' : 'העוזר'}: ${x.text}`).join('\n');
+
+// סקירה קולית של דף שנפתח: מה זה הדף ומה יש בו, כמו שעוזר אנושי היה מספר, ושאלה מה לעשות
+export async function pageGuide(page, persona = '') {
+  if (legacy) return `נפתח הדף ${page.title}`;
+  const links = (page.allLinks || page.links || []).slice(0, 25).map((l) => l.text).join(' | ');
+  const out = await complete([
+    { role: 'system', content: sys(persona) },
+    { role: 'user', content: `פתחת עבור המתקשר דף אינטרנט. ספר לו בשתיים שלוש משפטים מדוברים מה הדף ומה הדברים העיקריים שיש בו (למשל הנושאים או הכותרות הבולטות), ואז שאל אותו בקצרה מה הוא רוצה: לשמוע משהו מסוים, להיכנס למשהו, או סיכום. אל תקריא את כל הדף.\n\nכותרת: ${page.title}\nתוכן: ${page.text.slice(0, 2500)}\nקישורים בולטים: ${links}` },
+  ], 220);
+  return out || `נפתח הדף ${page.title}. מה תרצה לעשות?`;
+}
+
+// סוכן הדף: מבין פקודה חופשית בעברית ומחליט מה לעשות בדף. זוכר את השיחה בדף.
+// פועל על הטקסט והקישורים של הדף (לא לוחץ על כפתורים שדורשים הרצת קוד).
+export async function agent(page, command, history = [], persona = '') {
+  if (legacy) {
+    const c = String(command);
+    if (/חזור|צא/.test(c)) return { action: 'back' };
+    if (/סכם|סיכום/.test(c)) return { action: 'summary' };
+    if (/תקריא/.test(c)) return { action: 'read' };
+    const l = (page.allLinks || page.links || [])[0];
+    if (/תיכנס|תפתח/.test(c) && l) return { action: 'open', url: l.url, title: l.text };
+    return { action: 'answer', text: 'הסוכן לא זמין במצב בדיקה' };
+  }
   const links = (page.allLinks || page.links || []).map((l, i) => `${i + 1}. ${l.text}`).join('\n');
   const out = await complete([
-    { role: 'system', content: 'אתה סוכן שמפעיל דף אינטרנט עבור מתקשר בטלפון. החזר JSON בלבד, בלי הסברים, באחד הפורמטים: {"action":"open","index":מספר קישור} לפתיחת קישור מהרשימה, {"action":"back"} לחזרה אחורה, {"action":"summary"} לסיכום הדף, {"action":"read"} להקראה מחדש, {"action":"answer","text":"תשובה קצרה בעברית על סמך תוכן הדף"} לשאלה על הדף, {"action":"unknown"} אם הבקשה לא ברורה או לא אפשרית.' + rulesPrompt() },
-    { role: 'user', content: `כותרת הדף: ${page.title}\nתוכן הדף: ${page.text.slice(0, 3000)}\n\nקישורים:\n${links}\n\nפקודת המתקשר: ${command}` },
-  ], 160);
-  try {
-    const j = JSON.parse(String(out).match(/\{[\s\S]*\}/)[0]);
-    if (j.action === 'open') {
-      const l = (page.allLinks || page.links)[Number(j.index) - 1];
-      return l ? { action: 'open', url: l.url, title: l.text } : { action: 'unknown' };
-    }
-    return ['back', 'summary', 'read', 'answer'].includes(j.action) ? j : { action: 'unknown' };
-  } catch {
-    return { action: 'unknown' };
+    { role: 'system', content: `אתה עוזר חכם שמפעיל דף אינטרנט עבור מתקשר בטלפון. הבן מה הוא רוצה גם אם ניסח בחופשיות או בקיצור, לפי הקשר השיחה. החזר JSON בלבד באחד הפורמטים:
+{"action":"open","index":מספר} - להיכנס לקישור מהרשימה שהכי מתאים למה שביקש (גם אם אמר רק חלק מהשם, או "הראשון", "האחרון", "זה על X")
+{"action":"read","from":"מילים מהמקום בדף שממנו להתחיל, או ריק מההתחלה"} - כשביקש שתקריא את הדף או חלק ממנו
+{"action":"answer","text":"תשובה מדוברת וקצרה"} - לשאלה על הדף, לבקשה לפרט מה יש בדף, או כשצריך לשאול אותו שאלת הבהרה
+{"action":"summary"} - כשביקש סיכום
+{"action":"back"} - כשביקש לחזור אחורה או לצאת מהדף
+{"action":"search","query":"..."} - כשביקש לחפש משהו אחר ברשת
+אם אין בדף מה שביקש, החזר answer שמסביר בקצרה מה כן יש.` + rulesPrompt() + (persona ? ` על המתקשר: ${persona}` : '') },
+    { role: 'user', content: `כותרת הדף: ${page.title}\nתוכן הדף: ${page.text.slice(0, 3500)}\n\nקישורים:\n${links}\n\nהשיחה עד עכשיו:\n${histText(history)}\n\nהמתקשר אמר עכשיו: ${command}` },
+  ], 220);
+  const j = parseJson(out);
+  if (!j) return { action: 'answer', text: out ? String(out).slice(0, 400) : 'לא הבנתי, אפשר לומר במילים אחרות?' };
+  if (j.action === 'open') {
+    const l = (page.allLinks || page.links)[Number(j.index) - 1];
+    return l ? { action: 'open', url: l.url, title: l.text } : { action: 'answer', text: 'לא מצאתי קישור כזה בדף' };
   }
+  return ['back', 'summary', 'read', 'answer', 'search'].includes(j.action) ? j : { action: 'answer', text: 'לא הבנתי, אפשר לומר במילים אחרות?' };
+}
+
+// סוכן הפורום: מבין בקשה חופשית ומחזיר פעולה בפורום
+export async function forumAgent(state, command, history = [], persona = '') {
+  if (legacy) {
+    const c = String(command);
+    if (/צ׳?'?אט|הודעות פרטיות/.test(c)) return { action: 'chats' };
+    if (/תגיב|תכתוב תגובה/.test(c)) return { action: 'reply', text: c.replace(/^.*?(?:תגיב|תכתוב תגובה)\s*(ש)?/, '') || c };
+    if (/^(?:תפתח|תיכנס ל)(?:\s*נושא)?\s*(\d+)/.test(c)) return { action: 'open', index: Number(c.match(/(\d+)/)[1]) };
+    return { action: 'recent' };
+  }
+  const list = (state.list || []).map((x, i) => `${i + 1}. ${x}`).join('\n');
+  const out = await complete([
+    { role: 'system', content: `אתה עוזר חכם שמפעיל עבור מתקשר בטלפון את החשבון שלו בפורום "${state.forum}". הבן מה הוא רוצה גם אם ניסח בחופשיות, לפי ההקשר. החזר JSON בלבד באחד הפורמטים:
+{"action":"recent"} נושאים אחרונים | {"action":"unread"} נושאים שלא נקראו | {"action":"popular"} נושאים חמים
+{"action":"open","index":מספר} לפתוח פריט מהרשימה שמוצגת עכשיו (נושא או צ'אט) - בחר את המתאים לפי מה שאמר
+{"action":"more"} להמשיך להקריא עוד הודעות בנושא הפתוח | {"action":"summary"} לסכם את הנושא הפתוח
+{"action":"reply","text":"תוכן התגובה"} להגיב בנושא הפתוח. אם ביקש שתנסח בשבילו, נסח תגובה טובה ועניינית בגוף ראשון בשמו, בסגנון של כתיבה בפורום, בלי אימוג׳י
+{"action":"new_topic","category":"שם קטגוריה","title":"כותרת","text":"תוכן"} לפתוח נושא חדש. נסח כותרת ותוכן טובים לפי מה שביקש
+{"action":"chats"} רשימת הצ'אטים | {"action":"send_chat","text":"..."} לשלוח הודעה בצ'אט הפתוח
+{"action":"notifications"} התראות | {"action":"search","query":"..."} חיפוש בפורום
+{"action":"answer","text":"..."} תשובה או שאלת הבהרה קצרה | {"action":"exit"} לצאת מהפורום` + rulesPrompt() + (persona ? ` על המתקשר: ${persona}` : '') },
+    { role: 'user', content: `מצב נוכחי: ${state.where}\n${state.detail ? `תוכן פתוח: ${state.detail.slice(0, 2500)}\n` : ''}רשימה מוצגת:\n${list || 'אין'}\n\nהשיחה עד עכשיו:\n${histText(history)}\n\nהמתקשר אמר עכשיו: ${command}` },
+  ], 450);
+  return parseJson(out) || { action: 'answer', text: 'לא הבנתי, אפשר לומר במילים אחרות?' };
+}
+
+// הופך רשימה או שרשור לסקירה מדוברת וטבעית
+export async function narrate(instruction, data, persona = '') {
+  if (legacy) return String(data).slice(0, 300);
+  const out = await complete([
+    { role: 'system', content: sys(persona) },
+    { role: 'user', content: `${instruction}\n\n${String(data).slice(0, 5000)}` },
+  ], 350);
+  return out || String(data).slice(0, 400);
 }
 
 // שיחה של מנהל הקו עם ה-AI באתר הניהול. ה-AI יכול להוסיף או להסיר הוראות לקו.
