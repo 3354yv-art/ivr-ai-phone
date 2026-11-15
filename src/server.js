@@ -746,7 +746,7 @@ async function personalMode(call) {
       const code = users.createWebCode(call.phone);
       const spaced = code.split('').join(', ');
       const site = spokenSite('my');
-      await speak(call, `הקוד שלך הוא: ${spaced}. אחזור שוב: ${spaced}. הקוד תקף לרבע שעה. נכנסים לאתר ${site}, באנגלית, ומזינים את מספר הטלפון ואת הקוד. שם אפשר לחבר מייל וחשבון בפורום, ולראות מה העוזר זוכר עליך`);
+      await speak(call, `הקוד שלך הוא: ${spaced}. אחזור שוב: ${spaced}. הקוד תקף לרבע שעה. נכנסים לאתר ${site}, באנגלית, ומזינים את מספר הטלפון ואת הקוד. אחרי זה נשארים מחוברים. שם אפשר לחבר מייל וחשבון בפורום, ולראות מה העוזר זוכר עליך`);
     } else if (c === '6') {
       await speak(call, isDonor(call.phone) ? 'אתה כבר מתומכי הקו ומקבל את כל ההטבות. תודה רבה' : donateInfo());
     } else if (c === '5') {

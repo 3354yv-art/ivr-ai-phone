@@ -38,9 +38,18 @@ const cookieOf = (req, n) => {
   const m = String(req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${n}=([^;]+)`));
   return m ? m[1] : '';
 };
-const me = (req) => {
-  const s = sess[cookieOf(req, 'my')];
-  return s && s.until > Date.now() ? s.phone : '';
+// החיבור מתחדש בכל כניסה: מי שנכנס לפחות פעם בשנה לא יתנתק לעולם
+const YEAR = 365 * 86400_000;
+const me = (req, res) => {
+  const sid = cookieOf(req, 'my');
+  const s = sess[sid];
+  if (!s || s.until < Date.now()) return '';
+  if (res && s.until - Date.now() < YEAR - 86400_000) {
+    s.until = Date.now() + YEAR;
+    saveSess();
+    res.append('set-cookie', `my=${sid}; HttpOnly; SameSite=Lax; Path=/my; Max-Age=${YEAR / 1000}`);
+  }
+  return s.phone;
 };
 
 // הגבלת ניסיונות כניסה כללית
@@ -53,7 +62,7 @@ export function addMyRoutes(app) {
   });
 
   app.get('/my', (req, res) => {
-    const phone = me(req);
+    const phone = me(req, res);
     if (!phone) {
       const e = { wrong: 'הקוד שגוי', expired: 'הקוד פג תוקף או שנוסה יותר מדי פעמים. בקשו קוד חדש בקו', many: 'יותר מדי ניסיונות, נסו שוב בעוד כמה דקות' }[req.query.e] || '';
       return res.send(shell('האיזור האישי', `<div class="card" style="max-width:420px"><h1>האיזור האישי בקו</h1>
@@ -96,9 +105,9 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
       return res.redirect(`/my?e=${r}`);
     }
     const sid = crypto.randomBytes(32).toString('base64url');
-    sess[sid] = { phone, until: Date.now() + 30 * 86400_000 };
+    sess[sid] = { phone, until: Date.now() + YEAR };
     saveSess();
-    res.set('set-cookie', `my=${sid}; HttpOnly; SameSite=Lax; Path=/my; Max-Age=${30 * 86400}`);
+    res.set('set-cookie', `my=${sid}; HttpOnly; SameSite=Lax; Path=/my; Max-Age=${YEAR / 1000}`);
     res.redirect('/my?m=' + encodeURIComponent('נכנסתם בהצלחה'));
   });
 
