@@ -10,7 +10,8 @@ export const cfg = {
   // אפשר כמה מפתחות מופרדים בפסיק; מתחלפים ביניהם אוטומטית
   groqKeys: (process.env.GROQ_API_KEY || '').split(/[,\s]+/).filter(Boolean),
   groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-  groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo',
+  groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3',
+  googleCloudKey: process.env.GOOGLE_CLOUD_KEY || '',
   cerebrasKey: process.env.CEREBRAS_API_KEY || '',
   cerebrasModel: process.env.CEREBRAS_MODEL || 'gpt-oss-120b',
   cfAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',

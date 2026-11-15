@@ -8,6 +8,9 @@ export function clean(text) {
     .replace(/%/g, ' אחוז ')
     .replace(/&/g, ' ו ')
     .replace(/=/g, ' שווה ')
+    // סימני פיסוק הופכים לפסיק, כדי שההקראה תעצור בין משפטים ולא תישמע כמו רצף אחד
+    .replace(/(?<!\d)[.!?:;](?!\d)/g, ', ')
+    .replace(/[–—()\[\]]/g, ', ')
     .replace(/[‎‏‪-‮]/g, '')
     .replace(/[^֐-׿a-zA-Z0-9, \n]/g, ' ')
     .replace(/[\n\r]+/g, ', ')

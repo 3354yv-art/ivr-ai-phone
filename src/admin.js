@@ -262,6 +262,24 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     res.send(shell('שיחות אחרונות', `${nav}<div class="card"><h1>שיחות אחרונות</h1><p>בכחול מה שהמתקשרים אמרו, באפור מה שה-AI ענה. החדשים למעלה. <a href="/admin/live">רענן</a></p><table>${rows}</table></div>`));
   });
 
+  app.post('/admin/shortcut', (req, res) => {
+    if (!gate(req, res)) return;
+    let url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\//.test(url)) url = `https://${url}`;
+    const name = String(req.body?.name || '').trim().slice(0, 60);
+    const list = (getSetting('shortcuts', []) || []).filter((x) => x.name !== name);
+    if (name) list.push({ name, url });
+    setSetting('shortcuts', list);
+    res.redirect('/admin/settings');
+  });
+  app.post('/admin/shortcut/del', (req, res) => {
+    if (!gate(req, res)) return;
+    const list = getSetting('shortcuts', []) || [];
+    list.splice(Number(req.body?.i), 1);
+    setSetting('shortcuts', list);
+    res.redirect('/admin/settings');
+  });
+
   app.post('/admin/limit', (req, res) => {
     if (!gate(req, res)) return;
     setSetting('dailyLimit', Math.max(0, Math.min(1000, Number(req.body?.n) || 0)));
@@ -331,6 +349,8 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     const connected = Object.keys(db).filter((p) => db[p]?.app || db[p]?.google);
     res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr"> <button class="red">חסום</button></form><br><table>${bl}</table></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
+<div class="card"><h2>קיצורי אתרים לכל המתקשרים</h2><table>${(getSetting('shortcuts', []) || []).map((x, i) => `<tr><td><b>${esc(x.name)}</b></td><td dir="ltr">${esc(x.url)}</td><td><form method="post" action="/admin/shortcut/del"><input type="hidden" name="i" value="${i}"><button class="red">מחק</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table>
+<form method="post" action="/admin/shortcut"><input name="name" placeholder="שם, למשל: חדשות" required> <input name="url" dir="ltr" placeholder="https://..." required> <button>הוסף</button></form></div>
 <div class="card"><h2>תומכי הקו</h2><p>מי שתורם מפתח Groq ומקשר אותו למספר שלו מקבל: עדיפות במהירות (המפתח שלו משמש קודם אותו), שאלות ללא הגבלה, תשובות מורחבות, זיכרון גדול וברכה אישית. דף ההצטרפות: <a href="/donate" target="_blank">/donate</a></p>
 <form method="post" action="/admin/limit">מכסת שאלות יומית למי שאינו תומך: <input name="n" type="number" min="0" max="1000" value="${Number(getSetting('dailyLimit', 0))}" style="width:90px"> <button>שמור</button> <span style="color:#666;font-size:13px">(0 = ללא הגבלה)</span></form></div>
 <div class="card"><h2>מצב המפתחות (מאז ההפעלה)</h2><table><tr><th>מפתח</th><th>הצליחו</th><th>נכשלו</th><th>זמן תגובה ממוצע</th><th></th></tr>${keyStats().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td>${k.ok}</td><td>${k.fail}</td><td>${k.ms ? (k.ms / 1000).toFixed(1) + ' שנ׳' : '-'}</td><td>${k.resting ? '<span class="tag red">נח (מגבלת קצב)</span>' : '<span class="tag green">פעיל</span>'}</td></tr>`).join('') || '<tr><td>עדיין לא היו בקשות</td></tr>'}</table></div>

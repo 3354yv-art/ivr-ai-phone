@@ -9,6 +9,7 @@ import { verifyAccount } from './mail.js';
 import { Forum, FORUMS, dropForum } from './nodebb.js';
 import { isDonor } from './pool.js';
 import { historyFor } from './admin.js';
+import { VOICES, googleVoiceOn } from './voice.js';
 
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const show = (k) => (k && k[0] !== '0' ? `0${k}` : k);
@@ -91,6 +92,12 @@ export function addMyRoutes(app) {
 <div class="card"><h2>חשבונות באתרים</h2>${forums}<p class="note">הסיסמה נבדקת מול האתר ונשמרת מוצפנת בשרת.</p></div>
 <div class="card"><h2>מה העוזר זוכר עליי</h2><p>העוזר מתאים את התשובות לפי מה שכתוב כאן. אפשר להוסיף, למשל "קוראים לי משה" או "תענה לי תמיד בקצרה".</p><ul>${prefs || '<li>עדיין כלום</li>'}</ul>
 <form method="post" action="/my/pref"><input name="t" maxlength="300" placeholder="משהו שהעוזר צריך לדעת" required style="width:100%"><button>הוסף</button></form></div>
+<div class="card"><h2>הגדרות</h2><form method="post" action="/my/settings">
+${googleVoiceOn() ? `<p>קול העוזר: <select name="voice">${VOICES.map((x) => `<option value="${x.id}" ${((u.settings || {}).voice || '') === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></p>
+<p>מהירות דיבור: <select name="speed">${[['slow', 'איטי'], ['normal', 'רגיל'], ['fast', 'מהיר']].map(([k, n]) => `<option value="${k}" ${((u.settings || {}).speed || 'normal') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></p>` : '<p class="note">בחירת קולות תופעל כשהמנהל יגדיר מפתח של גוגל קלאוד.</p>'}
+<p>אורך התשובות: <select name="length">${[['short', 'קצרות'], ['medium', 'בינוניות'], ['long', 'מפורטות']].map(([k, n]) => `<option value="${k}" ${((u.settings || {}).length || 'medium') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></p><button>שמור הגדרות</button></form></div>
+<div class="card"><h2>קיצורי אתרים</h2><p>שם קצר לאתר שאתם נכנסים אליו הרבה. בקו: חיפוש ואתרים, ואז 4. או פשוט אומרים את השם בכניסה לאתר.</p><ul>${(u.shortcuts || []).map((s, i) => `<li><b>${esc(s.name)}</b>: <span dir="ltr">${esc(s.url)}</span> <form method="post" action="/my/shortcut/del" style="display:inline"><input type="hidden" name="i" value="${i}"><button class="gray" style="padding:2px 10px;font-size:13px">מחק</button></form></li>`).join('') || '<li>אין עדיין</li>'}</ul>
+<form method="post" action="/my/shortcut"><input name="name" placeholder="שם הקיצור, למשל: חדשות" required maxlength="60" style="width:100%"><input name="url" dir="ltr" placeholder="https://..." required style="width:100%"><button>הוסף קיצור</button></form></div>
 ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי שתורם מפתח חינמי של Groq מקבל מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מורחבות וזיכרון גדול. <a class="btn" href="/donate">להצטרפות</a></p></div>`}
 <div class="card"><h2>השיחות שלי</h2><p class="note">בכחול: מה שאמרתם. באפור: מה שהקו ענה.</p>${hist}</div>`));
   });
@@ -168,6 +175,34 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     if (!p) return;
     users.addPref(p, req.body?.t);
     back(res, 'נשמר');
+  });
+  app.post('/my/settings', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    const b = req.body || {};
+    if (VOICES.some((x) => x.id === b.voice)) users.setSetting(p, 'voice', b.voice);
+    if (['slow', 'normal', 'fast'].includes(b.speed)) users.setSetting(p, 'speed', b.speed);
+    if (['short', 'medium', 'long'].includes(b.length)) users.setSetting(p, 'length', b.length);
+    back(res, 'ההגדרות נשמרו');
+  });
+  app.post('/my/shortcut', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    let url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\//.test(url)) url = `https://${url}`;
+    try {
+      new URL(url);
+    } catch {
+      return back(res, 'כתובת לא תקינה');
+    }
+    users.addShortcut(p, String(req.body?.name || '').trim(), url);
+    back(res, 'הקיצור נשמר');
+  });
+  app.post('/my/shortcut/del', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    users.removeShortcut(p, Number(req.body?.i));
+    back(res, 'נמחק');
   });
   app.post('/my/pref/del', (req, res) => {
     const p = need(req, res);

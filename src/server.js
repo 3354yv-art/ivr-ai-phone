@@ -15,6 +15,7 @@ import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
 import { addPoolRoutes, allKeys, isDonor } from './pool.js';
 import { withCaller } from './ctx.js';
+import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.js';
 import { getSetting } from './rules.js';
 import { addMyRoutes } from './my.js';
 import { addAdminRoutes, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
@@ -27,9 +28,22 @@ const isControl = (e) => e instanceof CallError;
 
 // ---------- כלי עזר לשיחה ----------
 
+// הקול של המתקשר: קול גוגל שבחר (או ברירת המחדל), או הקול הרגיל של ימות
+const voiceOf = (call) => {
+  const s = users.getSettings(call.phone);
+  return { voice: s.voice || (googleVoiceOn() ? DEFAULT_VOICE : 'yemot'), rate: RATES[s.speed] || 1 };
+};
+// הודעה להשמעה: קובץ בקול של גוגל אם אפשר, אחרת טקסט בקול של ימות
+async function say(call, text) {
+  const t = clean(text);
+  const { voice, rate } = voiceOf(call);
+  const f = await voiceFile(t, voice, rate, tokenFor(call));
+  return f ? { type: 'file', data: f } : T(t);
+}
+
 // שואל שאלה עם הקשה אחת
-function ask(call, text, allowed, opts = {}) {
-  return call.read([T(text)], 'tap', {
+async function ask(call, text, allowed, opts = {}) {
+  return call.read([await say(call, text)], 'tap', {
     max_digits: 1,
     min_digits: 1,
     sec_wait: 7,
@@ -86,7 +100,7 @@ async function listenRaw(call, prompt, maxLen = 25) {
       console.warn('stt של ימות נכשל:', e.message);
     }
   }
-  const path = await call.read([T(prompt)], 'record', {
+  const path = await call.read([await say(call, prompt)], 'record', {
     no_confirm_menu: true,
     min_length: 1,
     max_length: maxLen,
@@ -111,9 +125,11 @@ async function speak(call, text) {
     await call.read([T('אין מה להקריא')], 'tap', { max_digits: 1, sec_wait: 1, allow_empty: true, empty_val: 'None', digits_allowed: [] });
     return 'done';
   }
+  // מכינים מראש את הקבצים של כמה קטעים, כדי שלא יהיו הפסקות
+  const msgs = parts.map((p, j) => (j < 6 ? say(call, p) : null));
   let i = 0;
   while (i < parts.length) {
-    const k = await call.read([{ type: 'text', data: parts[i] }], 'tap', {
+    const k = await call.read([await (msgs[i] || say(call, parts[i]))], 'tap', {
       max_digits: 1,
       min_digits: 1,
       sec_wait: 1,
@@ -172,7 +188,7 @@ async function chatMode(call) {
     let again = true;
     while (again) {
       await speak(call, answer);
-      const c = await ask(call, 'להמשך דברו אחרי הצליל. 2 שמיעה חוזרת, 0 תפריט ראשי', [0, 1, 2], { sec_wait: 1, allow_empty: true, empty_val: '1' });
+      const c = await ask(call, 'לשאלה נוספת, הקישו 1. לשמיעה חוזרת, 2. לתפריט הראשי, 0', [0, 1, 2], { sec_wait: 6, allow_empty: true, empty_val: '0' });
       if (c === '2') continue;
       if (c === '0') return;
       again = false;
@@ -526,6 +542,24 @@ async function searchMode(call) {
   }
 }
 
+// קיצורים: של המתקשר, ושל המנהל לכולם
+const allShortcuts = (call) => [...users.getShortcuts(call.phone), ...(getSetting('shortcuts', []) || [])];
+function findShortcut(call, name) {
+  const n = String(name).replace(/[^\p{L}\p{N} ]/gu, '').trim();
+  return allShortcuts(call).find((s) => n && (n.includes(s.name) || s.name.includes(n)));
+}
+
+async function shortcutsMode(call) {
+  const list = allShortcuts(call).slice(0, 9);
+  if (!list.length) {
+    await speak(call, 'עדיין אין קיצורים. אפשר להוסיף קיצורים באיזור האישי, בהקשה 9, או באתר האישי');
+    return;
+  }
+  const n = await ask(call, `${list.map((s, i) => `ל${s.name}, ${i + 1}`).join('. ')}. לחזרה, 0`, [0, ...list.map((_, i) => i + 1)], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+  const s = list[Number(n) - 1];
+  if (s) await browse(call, s.url);
+}
+
 // ---------- שלוחה 4: כניסה לאתר לפי שם ----------
 async function siteMode(call) {
   while (true) {
@@ -535,7 +569,8 @@ async function siteMode(call) {
       if (c === '1') continue;
       return;
     }
-    const url = /מתמחים|mitmachim/i.test(name) ? 'https://mitmachim.top' : await waitFor(call, ai.findSite(name));
+    const sc = findShortcut(call, name);
+    const url = sc ? sc.url : /מתמחים|mitmachim/i.test(name) ? 'https://mitmachim.top' : await waitFor(call, ai.findSite(name));
     if (!url) {
       await speak(call, 'לא מצאתי את האתר');
       continue;
@@ -718,7 +753,7 @@ async function personalMode(call) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
-    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const mine = recentFor(call.phone, 3);
@@ -738,6 +773,10 @@ async function personalMode(call) {
     } else if (c === '4') {
       const p = users.getPrefs(call.phone);
       await speak(call, p.length ? p.map((x, i) => `${i + 1}, ${x}`).join('. ') : 'העוזר עדיין לא זוכר עליך כלום');
+    } else if (c === '8') {
+      await settingsMode(call);
+    } else if (c === '9') {
+      await shortcutEdit(call);
     } else if (c === '7') {
       if (!call.phone) {
         await speak(call, 'אי אפשר להיכנס לאתר משיחה ממספר חסוי');
@@ -756,13 +795,78 @@ async function personalMode(call) {
   }
 }
 
+// הגדרות אישיות בטלפון: קול, אורך תשובות, מהירות דיבור
+async function settingsMode(call) {
+  if (!call.phone) return speak(call, 'אי אפשר לשמור הגדרות משיחה ממספר חסוי');
+  while (true) {
+    const c = await ask(call, 'לבחירת קול, הקישו 1. לאורך התשובות, 2. למהירות הדיבור, 3. לחזרה, 0', [0, 1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+    if (c === '0') return;
+    if (c === '1') {
+      if (!googleVoiceOn()) {
+        await speak(call, 'בחירת קולות עדיין לא הופעלה בקו. המנהל צריך להגדיר מפתח של גוגל קלאוד');
+        continue;
+      }
+      const vs = VOICES;
+      const n = await ask(call, `${vs.map((x, i) => `ל${x.name}, ${i + 1}`).join('. ')}. לחזרה, 0`, [0, ...vs.map((_, i) => i + 1)], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+      const pick = vs[Number(n) - 1];
+      if (pick) {
+        users.setSetting(call.phone, 'voice', pick.id);
+        await speak(call, `נבחר ${pick.name}. ככה אני נשמע עכשיו`);
+      }
+    } else if (c === '2') {
+      const n = await ask(call, 'לתשובות קצרות, 1. בינוניות, 2. מפורטות, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+      users.setSetting(call.phone, 'length', { 1: 'short', 2: 'medium', 3: 'long' }[n]);
+      await speak(call, 'נשמר');
+    } else if (c === '3') {
+      if (!googleVoiceOn()) {
+        await speak(call, 'שינוי מהירות זמין רק עם הקולות של גוגל, שעדיין לא הופעלו בקו');
+        continue;
+      }
+      const n = await ask(call, 'לדיבור איטי, 1. רגיל, 2. מהיר, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+      users.setSetting(call.phone, 'speed', { 1: 'slow', 2: 'normal', 3: 'fast' }[n]);
+      await speak(call, 'נשמר. ככה אני מדבר עכשיו');
+    }
+  }
+}
+
+// קיצורי אתרים אישיים: אומרים שם קצר ואיזה אתר, ואחר כך נכנסים אליו מיד
+async function shortcutEdit(call) {
+  if (!call.phone) return speak(call, 'אי אפשר לשמור קיצורים משיחה ממספר חסוי');
+  while (true) {
+    const list = users.getShortcuts(call.phone);
+    const c = await ask(call, `יש לך ${list.length} קיצורים. לשמיעתם, הקישו 1. להוספת קיצור, 2. למחיקת קיצור, 3. לחזרה, 0`, [0, 1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+    if (c === '0') return;
+    if (c === '1') await speak(call, list.length ? list.map((s, i) => `${i + 1}, ${s.name}`).join('. ') : 'אין עדיין קיצורים');
+    else if (c === '2') {
+      const site = await listen(call, 'איזה אתר? אמרו את שם האתר', 25, 'הוספת קיצור');
+      if (!site) continue;
+      const url = /מתמחים|mitmachim/i.test(site) ? 'https://mitmachim.top' : await waitFor(call, ai.findSite(site));
+      if (!url) {
+        await speak(call, 'לא מצאתי את האתר');
+        continue;
+      }
+      const name = (await listen(call, 'ואיך לקרוא לקיצור? למשל: חדשות', 10, 'הוספת קיצור')) || site;
+      users.addShortcut(call.phone, name, url);
+      await speak(call, `נשמר הקיצור ${name}. בחיפוש ואתרים, בהקשה 4, או כשאומרים את השם בכניסה לאתר`);
+    } else if (c === '3') {
+      if (!list.length) continue;
+      const n = await ask(call, `${list.slice(0, 9).map((s, i) => `למחיקת ${s.name}, ${i + 1}`).join('. ')}`, list.slice(0, 9).map((_, i) => i + 1), { sec_wait: 8, allow_empty: true, empty_val: '0' });
+      if (list[Number(n) - 1]) {
+        users.removeShortcut(call.phone, Number(n) - 1);
+        await speak(call, 'נמחק');
+      }
+    }
+  }
+}
+
 // ---------- חיפוש וכניסה לאתרים ----------
 async function webMode(call) {
   while (true) {
-    const c = await ask(call, 'לחיפוש בגוגל הקש 1, לכניסה לאתר לפי שם הקש 2, לפורום מתמחים טופ הקש 3, לתפריט הראשי הקש 0', [0, 1, 2, 3], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, 'לחיפוש, הקישו 1. לכניסה לאתר לפי שם, 2. לפורום מתמחים טופ, 3. לקיצורים שלכם, 4. לתפריט הראשי, 0', [0, 1, 2, 3, 4], { sec_wait: 8, allow_empty: true, empty_val: '0' });
     if (c === '1') await searchMode(call);
     else if (c === '2') await siteMode(call);
     else if (c === '3') await forumMode(call, 'mitmachim.top');
+    else if (c === '4') await shortcutsMode(call);
     else return;
   }
 }
@@ -792,12 +896,18 @@ async function handlerInner(call) {
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   logAnswer(call.phone, 'שיחה התחילה', '', true);
-  // ברכה קצרה שאפשר לקטוע בהקשה. מי שלא מקיש - מדבר ישר עם העוזר אחרי הצליל
+  // ברכה קצרה שאפשר לקטוע בהקשה. נכנסים לשיחה עם העוזר רק בהקשה על 1
   let first = true;
+  let silent = 0;
   while (true) {
     const hello = first ? `${isDonor(call.phone) ? 'שלום לתומך הקו' : 'שלום'}, הגעתם לעוזר החכם. השיחות נרשמות. ` : '';
-    const d = await ask(call, `${hello}דברו איתי אחרי הצליל, או הקישו: 2 חיפוש ואתרים, 3 מייל, 4 איזור אישי${first ? '' : ', 0 יציאה'}`, [0, 1, 2, 3, 4], { sec_wait: 1, allow_empty: true, empty_val: '1' });
+    const d = await ask(call, `${hello}לשיחה עם העוזר, הקישו 1. לחיפוש ואתרים, 2. למייל, 3. לאיזור האישי, 4. ליציאה, 0`, [0, 1, 2, 3, 4], { sec_wait: 6, allow_empty: true, empty_val: 'E' });
     first = false;
+    if (d === 'E') {
+      if (++silent >= 3) return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
+      continue;
+    }
+    silent = 0;
     if (d === '0') {
       return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
     }

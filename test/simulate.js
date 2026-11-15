@@ -150,7 +150,7 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
 // ---- איזור אישי באתר: קוד מהקו, כניסה, הוספת זיכרון ----
 {
   const W = await drive('callW', ['4', '7', '0', '0']);
-  const m = W.transcript.join(' ').match(/הקוד שלך הוא:? ((?:\d, ){5}\d)/);
+  const m = W.transcript.join(' ').match(/הקוד שלך הוא[:,]? ((?:\d, ){5}\d)/);
   const code = m ? m[1].replace(/\D/g, '') : '';
   check('אתר אישי: הקו מקריא קוד בן 6 ספרות', code.length === 6);
   const bad = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0501234567', code: '000000' }) });
@@ -160,6 +160,13 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   await fetch(`${root}/my/pref`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ck }, body: new URLSearchParams({ t: 'אוהב תשובות קצרות' }) });
   const pg = await (await fetch(`${root}/my`, { headers: { cookie: ck } })).text();
   check('אתר אישי: כניסה, היסטוריה וזיכרון שנוסף', ck.startsWith('my=') && pg.includes('אוהב תשובות קצרות') && pg.includes('השיחות שלי') && pg.includes('0501234567'));
+  const post = (u, o) => fetch(`${root}${u}`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ck }, body: new URLSearchParams(o) });
+  await post('/my/shortcut', { name: 'דוגמה', url: 'example.com' });
+  await post('/my/settings', { length: 'short' });
+  const us = (await import('../src/users.js'));
+  check('אתר אישי: קיצור והגדרת אורך נשמרו', us.getShortcuts('0501234567')[0]?.url === 'https://example.com' && us.getSettings('0501234567').length === 'short');
+  const S = await drive('callS', ['2', '4', '1', 'תחזור', '0', '0']);
+  check('קו: נכנסים לאתר דרך קיצור', said(S.transcript, 'נפתח הדף') && S.used === S.total && ended(S.transcript));
   const again = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0501234567', code }) });
   check('אתר אישי: קוד חד-פעמי', (again.headers.get('location') || '').includes('e='));
 }

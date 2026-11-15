@@ -52,7 +52,7 @@ export function addPoolRoutes(app) {
 <p><b>שימו לב:</b> השימוש במפתח נספר על החשבון שלכם ב-Groq, במסגרת החינמית שלו. המפתח נשמר בשרת בלבד ולא מוצג לאף אחד. אפשר לבקש את הסרתו בכל עת.</p>${warn}
 <form method="post" action="/donate">
 <p><input name="k" type="password" autocomplete="off" placeholder="gsk_..." style="width:100%;padding:10px;font-size:16px"></p>
-<p><input name="phone" inputmode="tel" placeholder="מספר הטלפון שממנו אתם מתקשרים לקו (בשביל ההטבות)" style="width:100%;padding:10px;font-size:16px"></p>
+<p><b>על שם איזה מספר טלפון?</b> המספר הזה יקבל גישה מלאה וכל ההטבות.<br><input name="phone" inputmode="tel" required placeholder="למשל 0501234567" style="width:100%;padding:10px;font-size:16px"></p>
 <p><label><input type="checkbox" name="ok" value="1"> אני מבין ומסכים שהקו ישתמש במפתח שלי</label></p><button>הצטרף לתומכים</button></form>`));
   });
   app.post('/donate', async (req, res) => {
@@ -60,7 +60,7 @@ export function addPoolRoutes(app) {
     const phone = String(req.body?.phone || '').replace(/\D/g, '');
     if (req.body?.ok !== '1') return res.status(400).send(page('<p>צריך לאשר את ההסכמה. חזרו אחורה ונסו שוב.</p>'));
     if (!/^gsk_[A-Za-z0-9]{20,100}$/.test(k)) return res.status(400).send(page('<p>המפתח לא נראה תקין. הוא צריך להתחיל ב-gsk_</p>'));
-    if (phone && !/^0?\d{8,9}$|^972\d{8,9}$/.test(phone)) return res.status(400).send(page('<p>מספר הטלפון לא תקין.</p>'));
+    if (!/^0?\d{8,9}$|^972\d{8,9}$/.test(phone)) return res.status(400).send(page('<p>צריך למלא מספר טלפון תקין, שעל שמו יינתנו ההרשאות. חזרו אחורה ונסו שוב.</p>'));
     const existing = pool.find((p) => p.key === k);
     if (existing) {
       if (phone) { existing.phone = np(phone); save(); }

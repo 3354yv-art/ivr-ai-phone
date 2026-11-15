@@ -130,6 +130,31 @@ export function checkWebCode(phone, code) {
   return 'ok';
 }
 
+// הגדרות אישיות: קול, אורך תשובות, מהירות דיבור, וקיצורי אתרים
+export const getSettings = (phone) => getUser(phone)?.settings || {};
+export function setSetting(phone, key, value) {
+  const k = normPhone(phone);
+  if (!k) return;
+  db[k] = { ...(db[k] || {}), settings: { ...(db[k]?.settings || {}), [key]: value } };
+  save();
+}
+export const getShortcuts = (phone) => getUser(phone)?.shortcuts || [];
+export function addShortcut(phone, name, url) {
+  const k = normPhone(phone);
+  if (!k || !name || !url) return false;
+  const list = (db[k]?.shortcuts || []).filter((s) => s.name !== name);
+  list.push({ name: String(name).slice(0, 60), url: String(url).slice(0, 300) });
+  db[k] = { ...(db[k] || {}), shortcuts: list.slice(-20) };
+  save();
+  return true;
+}
+export function removeShortcut(phone, i) {
+  const k = normPhone(phone);
+  if (db[k]?.shortcuts?.[i] === undefined) return;
+  db[k].shortcuts.splice(i, 1);
+  save();
+}
+
 export const personaOf = (phone) => getPrefs(phone).join('. ');
 
 export function setGoogle(phone, google) {

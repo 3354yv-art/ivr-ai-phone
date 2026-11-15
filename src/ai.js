@@ -7,9 +7,11 @@ import { SYSTEM as BASE, complete, transcribeChain, webAnswer } from './llm.js';
 import { rulesPrompt, listRules } from './rules.js';
 import { callerPhone } from './ctx.js';
 import { isDonor } from './pool.js';
+import { getSettings } from './users.js';
 
 // ההנחיה הבסיסית + הוראות המנהל (מתעדכן מיד כשהמנהל משנה)
-const sys = (persona = '') => BASE + (isDonor(callerPhone()) ? ' המתקשר הוא מתומכי הקו: כשזה מועיל, אפשר לענות בהרחבה ובפירוט רב יותר, עד חמישה משפטים.' : '') + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
+const LEN = { short: ' המתקשר ביקש תשובות קצרות: משפט או שניים.', long: ' המתקשר ביקש תשובות מפורטות: עד שמונה משפטים.' };
+const sys = (persona = '') => BASE + (LEN[getSettings(callerPhone()).length] || '') + (isDonor(callerPhone()) ? ' המתקשר הוא מתומכי הקו: כשזה מועיל, אפשר לענות בהרחבה ובפירוט רב יותר, עד חמישה משפטים.' : '') + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
 
 // מחכה עד ms; אם לא הסתיים מחזיר fallback (בלי לבטל)
 const within = (p, ms, fallback) => Promise.race([p.catch(() => fallback), new Promise((r) => setTimeout(() => r(fallback), ms))]);
@@ -30,7 +32,7 @@ export async function chat(history, userText, persona = '') {
     ...history.slice(-10).map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
     { role: 'user', content: userText },
   ];
-  return (await complete(messages)) || 'לא הצלחתי לענות על זה';
+  return (await complete(messages, 320)) || 'לא הצלחתי לענות על זה';
 }
 
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
@@ -47,12 +49,12 @@ export async function search(query, persona = '') {
     const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet.slice(0, 500)}`).join('\n');
     const answer = await complete([
       { role: 'system', content: sys(persona) },
-      { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nענה בקצרה על סמך התוצאות. אם הן לא עונות על השאלה, ענה מהידע שלך.` },
+      { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nענה על סמך התוצאות. אם הן לא עונות על השאלה, ענה מהידע שלך.` },
     ], 220);
     out = { answer: answer || 'לא מצאתי תשובה', sources: results.map((x) => ({ title: x.title, url: x.url })) };
   } else {
     // אין תוצאות: חיפוש אמיתי ברשת דרך גרוק, ובמקביל תשובה מהידע של המודל כגיבוי מהיר
-    const know = complete([{ role: 'system', content: sys(persona) }, { role: 'user', content: `ענה בקצרה על: ${query}` }], 220).catch(() => '');
+    const know = complete([{ role: 'system', content: sys(persona) }, { role: 'user', content: `ענה על: ${query}` }], 320).catch(() => '');
     const live = await within(webAnswer(query, sys(persona).slice(BASE.length)), 4500, '');
     out = { answer: live || (await know) || 'לא מצאתי תוצאות', sources: [] };
   }

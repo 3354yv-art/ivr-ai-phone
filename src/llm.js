@@ -6,8 +6,8 @@ import { transcribe as sttLocal } from './local.js';
 
 const SYSTEM = [
   'אתה עוזר אישי חכם בטלפון, שמדבר עם המתקשר כמו אדם נבון וחם, לא כמו רובוט שמדקלם. המשתמש שומע אותך בהקראה ולא קורא.',
-  'דבר בעברית מדוברת וטבעית, בשפה נקייה ומכובדת. תפוס מה המתקשר באמת צריך וענה לעניין, קצר וברור: עד שני משפטים קצרים אלא אם ביקשו הרחבה.',
-  'אל תחזור על השאלה, אל תפתח ב"שאלה טובה" ואל תסיים בנוסחאות קבועות. אם משהו לא ברור, שאל שאלה אחת קצרה.',
+  'דבר בעברית מדוברת וטבעית, בשפה נקייה ומכובדת. תפוס מה המתקשר באמת צריך וענה לעניין, ברור ובאורך בינוני: שלושה עד ארבעה משפטים, לא יותר, אלא אם ביקשו הרחבה או קיצור.',
+  'כתוב משפטים קצרים ושלמים עם פסיקים במקומות של הפסקה טבעית, כדי שההקראה תישמע ברורה ולא רצופה. אל תחזור על השאלה, אל תפתח ב"שאלה טובה" ואל תסיים בנוסחאות קבועות. אם משהו לא ברור, שאל שאלה אחת קצרה.',
   'בלי כוכביות, סימני עיצוב, רשימות, אימוג׳י או קישורים. כתוב משפטים רגילים.',
 ].join(' ');
 export { SYSTEM };
@@ -170,6 +170,7 @@ async function sttOpenaiStyle(base, key, model, wav) {
   fd.append('model', model);
   fd.append('language', 'he');
   fd.append('temperature', '0');
+  fd.append('prompt', 'שיחה בעברית עם עוזר טלפוני. חיפוש, שאלה, אתר, מייל, פורום מתמחים טופ.');
   fd.append('response_format', 'json');
   const r = await fetch(`${base}/audio/transcriptions`, {
     method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(6000),
@@ -178,7 +179,21 @@ async function sttOpenaiStyle(base, key, model, wav) {
   return String((await r.json()).text || '').trim();
 }
 
+// זיהוי דיבור של גוגל קלאוד (אם הוגדר מפתח): מדויק מאוד בעברית
+async function sttGoogle(wav) {
+  const r = await fetch(`https://speech.googleapis.com/v1/speech:recognize?key=${encodeURIComponent(cfg.googleCloudKey)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ config: { languageCode: 'he-IL', enableAutomaticPunctuation: true, model: 'default' }, audio: { content: Buffer.from(wav).toString('base64') } }),
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!r.ok) throw new Error(`google stt ${r.status}: ${(await r.text()).slice(0, 120)}`);
+  const j = await r.json();
+  return (j.results || []).map((x) => x.alternatives?.[0]?.transcript || '').join(' ').trim();
+}
+
 const STT = {
+  google: { on: () => !!cfg.googleCloudKey, call: (w) => sttGoogle(w) },
   groq: {
     on: () => allKeys().length > 0,
     call: (w) => withKeys((k) => sttOpenaiStyle('https://api.groq.com/openai/v1', k, cfg.groqSttModel, w)),
@@ -203,5 +218,6 @@ const STT = {
 };
 
 export async function transcribeChain(wav) {
-  return hedged(cfg.sttChain.filter((n) => STT[n]?.on()), (n) => STT[n].call(wav));
+  const chain = cfg.googleCloudKey && !cfg.sttChain.includes('google') ? ['google', ...cfg.sttChain] : cfg.sttChain;
+  return hedged(chain.filter((n) => STT[n]?.on()), (n) => STT[n].call(wav));
 }
