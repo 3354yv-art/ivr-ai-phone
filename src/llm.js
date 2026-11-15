@@ -1,6 +1,7 @@
 // ספקי AI בשרשרת גיבוי: מנסים לפי הסדר, ועוברים לבא כשהמכסה נגמרה או שיש תקלה.
 import { cfg } from './config.js';
-import { allKeys } from './pool.js';
+import { callerPhone } from './ctx.js';
+import { allKeys, donorKey, isDonor } from './pool.js';
 import { transcribe as sttLocal } from './local.js';
 
 const SYSTEM = [
@@ -27,7 +28,10 @@ async function withKeys(fn) {
   const now = Date.now();
   let keys = all.filter((k) => (rest.get(k) || 0) <= now);
   if (!keys.length) keys = all; // כולם נחים: מנסים בכל זאת
-  const start = rr++ % keys.length;
+  let start = rr++ % keys.length;
+  // תומך הקו: המפתח שלו משמש קודם כל אותו
+  const mine = donorKey(callerPhone());
+  if (mine && keys.includes(mine)) start = keys.indexOf(mine);
   let last;
   // לכל היותר 3 מפתחות לבקשה, כדי לא לעבור את זמן התגובה
   for (let i = 0; i < Math.min(keys.length, 3); i++) {
@@ -155,6 +159,7 @@ export async function webAnswer(query, extraSys = '') {
 const order = () => cfg.chain.filter((n) => LLM[n]?.on());
 
 export async function complete(messages, max_tokens = 120) {
+  if (isDonor(callerPhone())) max_tokens = Math.round(max_tokens * 1.8);
   return hedged(order(), (n) => LLM[n].call(messages, max_tokens));
 }
 

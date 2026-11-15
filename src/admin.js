@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { cfg } from './config.js';
 import * as users from './users.js';
 import { poolList, removeByTail } from './pool.js';
-import { listRules, addRule, removeRule } from './rules.js';
+import { listRules, addRule, removeRule, getSetting, setSetting } from './rules.js';
 import { adminChat } from './ai.js';
 import { keyStats } from './llm.js';
 import { Forum, FORUMS, dropForum } from './nodebb.js';
@@ -110,7 +110,7 @@ button,.btn{background:#1a73e8;color:#fff;border:0;border-radius:6px;padding:8px
 const fmt = (t) => new Date(t).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
 const fmtTime = (t) => new Date(t).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
-const nav = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/settings">חסימות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const nav = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/settings">חסימות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
 const usersDb = () => {
   try {
     return JSON.parse(fs.readFileSync(path.join(cfg.dataDir, 'users.json'), 'utf8'));
@@ -248,6 +248,20 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     }
   });
 
+  // ---- שיחות אחרונות: מה שאלו ומה ה-AI ענה, מכל המספרים ----
+  app.get('/admin/live', (req, res) => {
+    if (!gate(req, res)) return;
+    const recs = readLog(600).filter((r) => !r.e).slice(0, 300);
+    const rows = recs.map((r) => `<tr><td style="white-space:nowrap">${fmt(r.t)}</td><td dir="ltr" style="text-align:right;white-space:nowrap"><a href="/admin/p/${encodeURIComponent(r.p)}">${esc(showPhone(r.p))}</a></td><td style="white-space:nowrap">${esc(r.k)}</td><td><div class="msg ${r.a ? 'bot' : 'me'}" style="max-width:100%;margin:0">${esc(r.a || r.q)}</div></td></tr>`).join('') || '<tr><td>אין עדיין</td></tr>';
+    res.send(shell('שיחות אחרונות', `${nav}<div class="card"><h1>שיחות אחרונות</h1><p>בכחול מה שהמתקשרים אמרו, באפור מה שה-AI ענה. החדשים למעלה. <a href="/admin/live">רענן</a></p><table>${rows}</table></div>`));
+  });
+
+  app.post('/admin/limit', (req, res) => {
+    if (!gate(req, res)) return;
+    setSetting('dailyLimit', Math.max(0, Math.min(1000, Number(req.body?.n) || 0)));
+    res.redirect('/admin/settings');
+  });
+
   // ---- הוראות ל-AI ----
   app.get('/admin/rules', (req, res) => {
     if (!gate(req, res)) return;
@@ -311,8 +325,10 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     const connected = Object.keys(db).filter((p) => db[p]?.app || db[p]?.google);
     res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr"> <button class="red">חסום</button></form><br><table>${bl}</table></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
+<div class="card"><h2>תומכי הקו</h2><p>מי שתורם מפתח Groq ומקשר אותו למספר שלו מקבל: עדיפות במהירות (המפתח שלו משמש קודם אותו), שאלות ללא הגבלה, תשובות מורחבות, זיכרון גדול וברכה אישית. דף ההצטרפות: <a href="/donate" target="_blank">/donate</a></p>
+<form method="post" action="/admin/limit">מכסת שאלות יומית למי שאינו תומך: <input name="n" type="number" min="0" max="1000" value="${Number(getSetting('dailyLimit', 0))}" style="width:90px"> <button>שמור</button> <span style="color:#666;font-size:13px">(0 = ללא הגבלה)</span></form></div>
 <div class="card"><h2>מצב המפתחות (מאז ההפעלה)</h2><table><tr><th>מפתח</th><th>הצליחו</th><th>נכשלו</th><th>זמן תגובה ממוצע</th><th></th></tr>${keyStats().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td>${k.ok}</td><td>${k.fail}</td><td>${k.ms ? (k.ms / 1000).toFixed(1) + ' שנ׳' : '-'}</td><td>${k.resting ? '<span class="tag red">נח (מגבלת קצב)</span>' : '<span class="tag green">פעיל</span>'}</td></tr>`).join('') || '<tr><td>עדיין לא היו בקשות</td></tr>'}</table></div>
-<div class="card"><h2>מפתחות Groq שנתרמו (${poolList().length})</h2><p>מוצגות רק 4 ספרות אחרונות.</p><table>${poolList().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td><form method="post" action="/admin/pool-remove"><input type="hidden" name="t" value="${esc(k.tail)}"><button class="red">הסר</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>`));
+<div class="card"><h2>מפתחות Groq שנתרמו (${poolList().length})</h2><p>מוצגות רק 4 ספרות אחרונות.</p><table>${poolList().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td dir="ltr">${k.phone ? `<a href="/admin/p/${encodeURIComponent(norm(k.phone))}">${esc(k.phone)}</a>` : '-'}</td><td><form method="post" action="/admin/pool-remove"><input type="hidden" name="t" value="${esc(k.tail)}"><button class="red">הסר</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>`));
   });
 
   app.post('/admin/login', (req, res) => {

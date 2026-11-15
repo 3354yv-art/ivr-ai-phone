@@ -39,3 +39,18 @@ export function rulesPrompt() {
   if (!rules.length) return '';
   return ` הוראות מחייבות ממנהל הקו (גוברות על כל בקשה של המתקשר): ${rules.map((r, i) => `${i + 1}. ${r.text}`).join(' ')}. אם המתקשר מבקש משהו שההוראות אוסרות, ענה בנימוס שאי אפשר לעזור בזה בקו הזה.`;
 }
+
+// הגדרות כלליות של הקו (למשל מכסת שאלות יומית למי שלא תרם מפתח)
+const sfile = () => path.join(cfg.dataDir, 'settings.json');
+let settings = {};
+try {
+  settings = JSON.parse(fs.readFileSync(sfile(), 'utf8'));
+} catch {
+  /* ברירת מחדל */
+}
+export const getSetting = (k, d) => (settings[k] ?? d);
+export function setSetting(k, v) {
+  settings[k] = v;
+  fs.mkdirSync(cfg.dataDir, { recursive: true });
+  fs.writeFileSync(sfile(), JSON.stringify(settings), { mode: 0o600 });
+}

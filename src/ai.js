@@ -5,9 +5,11 @@ import { ddg, wiki } from './local.js';
 import { cfg } from './config.js';
 import { SYSTEM as BASE, complete, transcribeChain, webAnswer } from './llm.js';
 import { rulesPrompt, listRules } from './rules.js';
+import { callerPhone } from './ctx.js';
+import { isDonor } from './pool.js';
 
 // ההנחיה הבסיסית + הוראות המנהל (מתעדכן מיד כשהמנהל משנה)
-const sys = (persona = '') => BASE + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
+const sys = (persona = '') => BASE + (isDonor(callerPhone()) ? ' המתקשר הוא מתומכי הקו: כשזה מועיל, אפשר לענות בהרחבה ובפירוט רב יותר, עד חמישה משפטים.' : '') + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
 
 // מחכה עד ms; אם לא הסתיים מחזיר fallback (בלי לבטל)
 const within = (p, ms, fallback) => Promise.race([p.catch(() => fallback), new Promise((r) => setTimeout(() => r(fallback), ms))]);

@@ -16,6 +16,7 @@ globalThis.__forum = { posted: [], chats: [] };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (u, o = {}) => {
   const url = String(u);
+  if (url === 'https://api.groq.com/openai/v1/models') return new Response('{}', { status: String(o.headers?.authorization).includes('gsk_good') ? 200 : 401 });
   if (!url.startsWith('https://mitmachim.top')) return realFetch(u, o);
   const p = url.slice('https://mitmachim.top'.length);
   const ck = String(o.headers?.cookie || '');
@@ -131,6 +132,19 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const F = await drive('callF', ['2', '3', 'תפתח 1', 'תגיב שתודה רבה על העזרה', '1', 'צ׳אטים', '', '', '0', '0', '0']);
   check('פורום: נכנס בחשבון, הקריא נושא ופרסם תגובה אחרי אישור', said(F.transcript, 'בחשבון יודע ומייבין') && said(F.transcript, 'מישהו יודע איך מתקינים') && globalThis.__forum.posted.includes('תודה רבה על העזרה'));
   check('פורום: רשימת צ׳אטים מוקראת', said(F.transcript, 'שמעון') && F.used === F.total && ended(F.transcript));
+}
+
+// ---- תומכי הקו: תרומת מפתח עם מספר, הטבות ומכסה ----
+{
+  const { setSetting } = await import('../src/rules.js');
+  setSetting('dailyLimit', 1);
+  const G = await drive('callG', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0']);
+  check('מכסה: מי שאינו תומך נעצר אחרי המכסה ושומע איך להצטרף', said(G.transcript, 'הגעת למכסה'));
+  const don = await fetch(`${root}/donate`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ k: 'gsk_good1234567890123456789012', phone: '050-1234567', ok: '1' }) });
+  check('תרומה: מפתח עם מספר טלפון נקלט ומראה את ההטבות', don.status === 200 && (await don.text()).includes('הטבות התומכים'));
+  const H = await drive('callH', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0', '0']);
+  check('תומך: ברכה אישית ובלי מכסה', said(H.transcript, 'לתומך הקו') && !said(H.transcript, 'הגעת למכסה') && H.used === H.total);
+  setSetting('dailyLimit', 0);
 }
 
 // ---- אבטחה ----

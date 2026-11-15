@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { cfg } from './config.js';
+import { isDonor } from './pool.js';
 
 // משתמשים נשמרים בקובץ JSON (הרשאות 600). המפתח הוא 9 הספרות האחרונות של הטלפון.
 const file = () => path.join(cfg.dataDir, 'users.json');
@@ -86,7 +87,7 @@ export function addPref(phone, text) {
   const k = normPhone(phone);
   const t = String(text || '').trim().slice(0, 300);
   if (!k || !t) return false;
-  const prefs = [...(db[k]?.prefs || []), t].slice(-15);
+  const prefs = [...(db[k]?.prefs || []), t].slice(isDonor(k) ? -50 : -15);
   db[k] = { ...(db[k] || {}), prefs };
   save();
   return true;

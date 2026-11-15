@@ -13,7 +13,9 @@ import * as mail from './mail.js';
 import * as gmail from './gmail.js';
 import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
-import { addPoolRoutes, allKeys } from './pool.js';
+import { addPoolRoutes, allKeys, isDonor } from './pool.js';
+import { withCaller } from './ctx.js';
+import { getSetting } from './rules.js';
 import { addAdminRoutes, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
@@ -101,6 +103,8 @@ async function listenRaw(call, prompt, maxLen = 25) {
 
 // מקריא טקסט בקטעים. 1 או 0 = עצירה, 4 = אחורה, 6 = דילוג
 async function speak(call, text) {
+  // כל מה שהקו אומר נרשם לתיק, חוץ מתוכן מיילים
+  if (!call.noLog && text) logAnswer(call.phone, 'הקו אמר', String(text).slice(0, 2000));
   const parts = chunk(text);
   if (!parts.length) {
     await call.read([T('אין מה להקריא')], 'tap', { max_digits: 1, sec_wait: 1, allow_empty: true, empty_val: 'None', digits_allowed: [] });
@@ -123,6 +127,22 @@ async function speak(call, text) {
   return 'done';
 }
 
+// מכסת שאלות יומית למי שלא תרם מפתח (0 = ללא הגבלה, נקבע באתר הניהול)
+const daily = new Map();
+async function quotaOk(call) {
+  const limit = Number(getSetting('dailyLimit', 0));
+  if (!limit || !call.phone || isDonor(call.phone)) return true;
+  const k = `${new Date().toISOString().slice(0, 10)}|${call.phone}`;
+  const n = (daily.get(k) || 0) + 1;
+  daily.set(k, n);
+  if (daily.size > 5000) daily.clear();
+  if (n <= limit) return true;
+  await speak(call, `הגעת למכסה של ${limit} שאלות להיום. תומכי הקו מקבלים שאלות ללא הגבלה. כדי לשמוע איך להצטרף, היכנס לאיזור האישי והקש 6`);
+  return false;
+}
+
+const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מפורטות יותר, וזיכרון גדול יותר. כדי להצטרף, תורמים מפתח חינמי של גרוק. נכנסים לכתובת ${(cfg.baseUrl || '').replace(/^https?:\/\//, '')} לוכסן donate, באנגלית, ושם יש הסבר של דקה איך להשיג מפתח. בטופס מזינים גם את מספר הטלפון שממנו מתקשרים, וההטבות מתחילות מיד`;
+
 // ---------- שלוחה 1: צ'אט ----------
 async function chatMode(call) {
   const history = [];
@@ -141,10 +161,10 @@ async function chatMode(call) {
       q = await listen(call, 'מה עוד תרצה לשאול', 25, 'שיחה עם AI');
       continue;
     }
+    if (!(await quotaOk(call))) return;
     const answer = await waitFor(call, ai.chat(history, q, users.personaOf(call.phone)));
-    logAnswer(call.phone, 'תשובת AI', answer);
     history.push({ role: 'user', text: q }, { role: 'model', text: answer });
-    if (history.length > 20) history.splice(0, 2);
+    if (history.length > (isDonor(call.phone) ? 40 : 20)) history.splice(0, 2);
     let again = true;
     while (again) {
       await speak(call, answer);
@@ -165,8 +185,7 @@ async function agentCommand(call, page, history = []) {
     return null;
   }
   const act = await waitFor(call, ai.agent(page, cmd, history, users.personaOf(call.phone)));
-  if (act?.action === 'answer') logAnswer(call.phone, 'תשובת העוזר', act.text);
-  else if (act?.action === 'open') logAnswer(call.phone, 'העוזר פתח', act.title || act.url);
+  if (act?.action === 'open') logAnswer(call.phone, 'העוזר פתח', act.title || act.url);
   return act;
 }
 
@@ -247,7 +266,6 @@ async function browse(call, startUrl) {
         await speak(call, res.answer);
       } else {
         const t = act.text || 'לא הבנתי, אפשר לומר במילים אחרות?';
-        logAnswer(call.phone, 'תשובת העוזר', t);
         history.push({ role: 'model', text: t });
         await speak(call, t);
       }
@@ -472,8 +490,8 @@ async function searchMode(call) {
       if (c === '1') continue;
       return;
     }
+    if (!(await quotaOk(call))) return;
     const res = await waitFor(call, ai.search(q, users.personaOf(call.phone)));
-    logAnswer(call.phone, 'תשובת חיפוש', res.answer);
     let more = true;
     while (more) {
       const sr = await speak(call, res.answer);
@@ -631,6 +649,16 @@ async function linkFlow(call) {
 }
 
 async function mailMode(call) {
+  // תוכן מיילים לא נרשם לתיק
+  call.noLog = true;
+  try {
+    return await mailModeInner(call);
+  } finally {
+    call.noLog = false;
+  }
+}
+
+async function mailModeInner(call) {
   const prov = providerFor(call);
   if (!prov) return registerFlow(call);
   const msgs = await waitFor(call, prov.unread(5));
@@ -686,7 +714,7 @@ async function personalMode(call) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
-    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const mine = recentFor(call.phone, 3);
@@ -706,6 +734,8 @@ async function personalMode(call) {
     } else if (c === '4') {
       const p = users.getPrefs(call.phone);
       await speak(call, p.length ? p.map((x, i) => `${i + 1}, ${x}`).join('. ') : 'העוזר עדיין לא זוכר עליך כלום');
+    } else if (c === '6') {
+      await speak(call, isDonor(call.phone) ? 'אתה כבר מתומכי הקו ומקבל את כל ההטבות. תודה רבה' : donateInfo());
     } else if (c === '5') {
       users.clearPrefs(call.phone);
       await speak(call, 'נמחק');
@@ -735,7 +765,11 @@ function authorized(call) {
   return true;
 }
 
-async function handler(call) {
+function handler(call) {
+  return withCaller(call.phone, () => handlerInner(call));
+}
+
+async function handlerInner(call) {
   if (!authorized(call)) {
     console.warn('שיחה לא מורשית מ', call.phone);
     return call.id_list_message([T('אין הרשאה'), { type: 'go_to_folder', data: 'hangup' }]);
@@ -745,7 +779,7 @@ async function handler(call) {
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   logAnswer(call.phone, 'שיחה התחילה', '', true);
-  await call.id_list_message([T('שלום, הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אחת כדי לעצור הקראה ולומר לעוזר מה לעשות. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
+  await call.id_list_message([T((isDonor(call.phone) ? 'שלום לתומך הקו, ותודה שאתה איתנו. ' : 'שלום, ') + 'הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אחת כדי לעצור הקראה ולומר לעוזר מה לעשות. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
   while (true) {
     const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
     if (d === '0') {
