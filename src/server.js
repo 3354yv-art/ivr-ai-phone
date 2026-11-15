@@ -564,6 +564,8 @@ const SETUP_FIELDS = [
   ['CLOUDFLARE_API_TOKEN', 'Cloudflare API Token (גיבוי, אופציונלי)'],
   ['GEMINI_API_KEY', 'מפתח Gemini (אופציונלי)'],
   ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
+  ['BREVO_API_KEY', 'מפתח API של Brevo לשליחת מיילי החיבור (מומלץ)'],
+  ['BREVO_SENDER', 'כתובת השולח שאושרה ב-Brevo (בדרך כלל המייל שאיתו נרשמת)'],
   ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
   ['MAIL_APP_PASSWORD', 'סיסמת אפליקציה של הג׳ימייל (אופציונלי)'],
   ['BASE_URL', 'כתובת ציבורית של השרת (אופציונלי)'],
@@ -700,6 +702,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   app.listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
   // פורט נוסף (למשל 6080) לכניסה מהדפדפן כשחומת האש של השרת סוגרת את 3000
   if (process.env.EXTRA_PORT) app.listen(Number(process.env.EXTRA_PORT), () => console.log(`גם על :${process.env.EXTRA_PORT}`));
+  // כתובת זמנית ישנה (trycloudflare) או localhost לא עובדות בקישורים במייל: עוברים לכתובת ה-IP הציבורית של השרת
+  if (process.env.EXTRA_PORT && /trycloudflare|localhost/.test(cfg.baseUrl)) {
+    fetch('https://api.ipify.org', { signal: AbortSignal.timeout(8000) }).then((r) => r.text()).then((ip) => {
+      if (/^\d+\.\d+\.\d+\.\d+$/.test(ip.trim())) {
+        cfg.baseUrl = `http://${ip.trim()}:${process.env.EXTRA_PORT}`;
+        console.log('כתובת לקישורים:', cfg.baseUrl);
+      }
+    }).catch(() => {});
+  }
   llmWarm();
   setInterval(llmWarm, 4 * 60 * 1000).unref();
 }

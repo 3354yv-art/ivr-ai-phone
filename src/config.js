@@ -45,6 +45,8 @@ export const cfg = {
   smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
   smtpPort: Number(process.env.SMTP_PORT || 465),
   smtpUser: process.env.SMTP_USER || process.env.MAIL_USER || '',
+  brevoKey: process.env.BREVO_API_KEY || '',
+  brevoSender: process.env.BREVO_SENDER || process.env.MAIL_USER || '',
   smtpPass: process.env.SMTP_PASS || process.env.MAIL_APP_PASSWORD || '',
   mock: process.env.MOCK === '1',
   debug: process.env.DEBUG === '1',
