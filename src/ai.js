@@ -119,12 +119,16 @@ export async function agent(page, command, history = [], persona = '') {
 {"action":"answer","text":"תשובה מדוברת וקצרה"} - לשאלה על הדף, לבקשה לפרט מה יש בדף, או כשצריך לשאול אותו שאלת הבהרה
 {"action":"summary"} - כשביקש סיכום
 {"action":"back"} - כשביקש לחזור אחורה או לצאת מהדף
-{"action":"search","query":"..."} - כשביקש לחפש משהו אחר ברשת
+{"action":"search","query":"..."} - כשביקש לחפש משהו אחר ברשת${page.interactive ? `
+{"action":"click","index":מספר} - ללחוץ על כפתור, קישור או רכיב מהרשימה (למשל "תלחץ על הוסף לסל", "תיכנס להתחברות")
+{"action":"fill","index":מספר שדה,"text":"מה לכתוב","submit":true/false} - לכתוב בשדה (למשל חיפוש באתר), ו-submit true כדי לשלוח אחרי הכתיבה` : ''}
 אם אין בדף מה שביקש, החזר answer שמסביר בקצרה מה כן יש.` + rulesPrompt() + (persona ? ` על המתקשר: ${persona}` : '') },
     { role: 'user', content: `כותרת הדף: ${page.title}\nתוכן הדף: ${page.text.slice(0, 3500)}\n\nקישורים:\n${links}\n\nהשיחה עד עכשיו:\n${histText(history)}\n\nהמתקשר אמר עכשיו: ${command}` },
   ], 220);
   const j = parseJson(out);
   if (!j) return { action: 'answer', text: out ? String(out).slice(0, 400) : 'לא הבנתי, אפשר לומר במילים אחרות?' };
+  if (page.interactive && (j.action === 'click' || j.action === 'open')) return { action: 'click', index: Number(j.index), title: (page.allLinks || [])[Number(j.index) - 1]?.text || '' };
+  if (page.interactive && j.action === 'fill') return { action: 'fill', index: Number(j.index), text: String(j.text || ''), submit: !!j.submit };
   if (j.action === 'open') {
     const l = (page.allLinks || page.links)[Number(j.index) - 1];
     return l ? { action: 'open', url: l.url, title: l.text } : { action: 'answer', text: 'לא מצאתי קישור כזה בדף' };

@@ -8,6 +8,7 @@ import * as ai from './ai.js';
 import { warmUp as llmWarm } from './llm.js';
 import { downloadRecording, deleteRecording, tokenFor } from './yemot.js';
 import { fetchPage } from './web.js';
+import * as web from './browser.js';
 import { forumFor, dropForum, isForumHost, FORUMS, ago } from './nodebb.js';
 import * as mail from './mail.js';
 import * as gmail from './gmail.js';
@@ -228,8 +229,82 @@ async function hear(call, prompt, kind) {
   return c === '1' ? hear(call, prompt, kind) : null;
 }
 
+// דפדפן אמיתי: העוזר לוחץ על כפתורים וממלא שדות
+async function browseLive(call, startUrl) {
+  const id = String(call.callId || call.phone || Math.random());
+  const persona = users.personaOf(call.phone);
+  let page;
+  try {
+    page = { ...(await waitFor(call, web.open(id, startUrl))), interactive: true };
+  } catch (e) {
+    if (isControl(e)) throw e;
+    console.error('browser open', startUrl, e.message);
+    return 'fallback';
+  }
+  const history = [];
+  let depth = 0;
+  try {
+    const guide = await waitFor(call, ai.pageGuide(page, persona));
+    history.push({ role: 'model', text: guide });
+    await speak(call, guide);
+    while (true) {
+      if (isForumHost(hostOf(page.url))) {
+        await forumMode(call, hostOf(page.url));
+        return;
+      }
+      const cmd = await hear(call, 'אני מקשיב', 'פקודה לסוכן');
+      if (cmd === null) return;
+      history.push({ role: 'user', text: cmd });
+      const act = await waitFor(call, ai.agent(page, cmd, history, persona));
+      let note = '';
+      try {
+        if (act.action === 'click') {
+          logAnswer(call.phone, 'העוזר לחץ', act.title);
+          const before = page.url;
+          page = { ...(await waitFor(call, web.act(id, { type: 'click', index: act.index }))), interactive: true };
+          if (page.url !== before) depth++;
+          note = await waitFor(call, ai.pageGuide(page, persona));
+        } else if (act.action === 'fill') {
+          logAnswer(call.phone, 'העוזר כתב בשדה', act.text);
+          const before = page.url;
+          page = { ...(await waitFor(call, web.act(id, { type: 'fill', index: act.index, text: act.text, submit: act.submit }))), interactive: true };
+          if (page.url !== before) depth++;
+          note = act.submit ? await waitFor(call, ai.pageGuide(page, persona)) : `כתבתי ${act.text}. מה עכשיו?`;
+        } else if (act.action === 'back') {
+          if (depth <= 0) {
+            await speak(call, 'יוצא מהאתר');
+            return;
+          }
+          depth--;
+          page = { ...(await waitFor(call, web.act(id, { type: 'back' }))), interactive: true };
+          note = await waitFor(call, ai.pageGuide(page, persona));
+        } else if (act.action === 'read') {
+          const from = act.from ? page.text.indexOf(act.from) : -1;
+          await speak(call, page.text.slice(Math.max(0, from)));
+          note = 'זהו. מה עוד?';
+        } else if (act.action === 'summary') {
+          note = await waitFor(call, ai.summarize(page.text));
+        } else if (act.action === 'search' && act.query) {
+          note = (await waitFor(call, ai.search(act.query, persona))).answer;
+        } else {
+          note = act.text || 'לא הבנתי, אפשר לומר במילים אחרות?';
+        }
+      } catch (e) {
+        if (isControl(e)) throw e;
+        console.error('browser act', act.action, e.message);
+        note = 'לא הצלחתי לעשות את זה בדף. אפשר לנסות במילים אחרות';
+      }
+      history.push({ role: 'model', text: note });
+      await speak(call, note);
+    }
+  } finally {
+    web.close(id);
+  }
+}
+
 async function browse(call, startUrl) {
   if (isForumHost(hostOf(startUrl))) return forumMode(call, hostOf(startUrl));
+  if (!cfg.mock && (await web.available()) && (await browseLive(call, startUrl)) !== 'fallback') return;
   const persona = users.personaOf(call.phone);
   const stack = [];
   let url = startUrl;
