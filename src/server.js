@@ -19,7 +19,7 @@ import { withCaller } from './ctx.js';
 import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.js';
 import { getSetting } from './rules.js';
 import { addMyRoutes } from './my.js';
-import { addAdminRoutes, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
+import { addAdminRoutes, blockInfo, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -966,8 +966,11 @@ async function handlerInner(call) {
     console.warn('שיחה לא מורשית מ', call.phone);
     return call.id_list_message([T('אין הרשאה'), { type: 'go_to_folder', data: 'hangup' }]);
   }
-  if (isBlocked(call.phone)) {
-    return call.id_list_message([T('המספר שלך נחסם'), { type: 'go_to_folder', data: 'hangup' }]);
+  const bi = blockInfo(call.phone);
+  if (bi) {
+    const left = bi.until ? bi.until - Date.now() : 0;
+    const howLong = !bi.until ? 'לצמיתות' : left < 3600_000 * 2 ? `לעוד ${Math.max(1, Math.round(left / 60000))} דקות` : left < 86400_000 * 2 ? `לעוד ${Math.round(left / 3600_000)} שעות` : `לעוד ${Math.round(left / 86400_000)} ימים`;
+    return call.id_list_message([T(`המספר שלך נחסם ${howLong}. ${bi.reason ? `הסיבה: ${bi.reason}.` : ''} להתראות`), { type: 'go_to_folder', data: 'hangup' }]);
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   logAnswer(call.phone, 'שיחה התחילה', '', true);
@@ -1017,6 +1020,7 @@ const SETUP_FIELDS = [
   ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
   ['BREVO_API_KEY', 'מפתח API של Brevo לשליחת מיילי החיבור (מומלץ)'],
   ['BREVO_SENDER', 'כתובת השולח שאושרה ב-Brevo (בדרך כלל המייל שאיתו נרשמת)'],
+  ['GOOGLE_CLOUD_KEY', 'מפתח API של גוגל קלאוד: קולות ברורים וזיהוי דיבור מדויק (אופציונלי)'],
   ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
   ['MAIL_APP_PASSWORD', 'סיסמת אפליקציה של הג׳ימייל (אופציונלי)'],
   ['BASE_URL', 'כתובת ציבורית של השרת (אופציונלי)'],

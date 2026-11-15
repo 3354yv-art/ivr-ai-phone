@@ -15,18 +15,35 @@ const logFile = () => path.join(cfg.dataDir, 'queries.jsonl');
 const blockFile = () => path.join(cfg.dataDir, 'blocked.json');
 const norm = (p) => String(p || '').replace(/\D/g, '').slice(-9);
 
-let blocked = new Set();
+// חסימות: מספר -> { reason, until (0 = לצמיתות), t }
+let blocked = new Map();
 try {
-  blocked = new Set(JSON.parse(fs.readFileSync(blockFile(), 'utf8')));
+  const j = JSON.parse(fs.readFileSync(blockFile(), 'utf8'));
+  blocked = new Map(Array.isArray(j) ? j.map((p) => (typeof p === 'string' ? [p, { reason: '', until: 0, t: Date.now() }] : p)) : Object.entries(j));
 } catch {
   /* אין חסימות עדיין */
 }
 const saveBlocked = () => {
   fs.mkdirSync(cfg.dataDir, { recursive: true });
-  fs.writeFileSync(blockFile(), JSON.stringify([...blocked]), { mode: 0o600 });
+  fs.writeFileSync(blockFile(), JSON.stringify(Object.fromEntries(blocked)), { mode: 0o600 });
 };
-
-export const isBlocked = (phone) => !!norm(phone) && blocked.has(norm(phone));
+// חסימה שפג תוקפה משתחררת לבד
+const live = (p) => {
+  const b = blocked.get(p);
+  if (b && b.until && b.until < Date.now()) {
+    blocked.delete(p);
+    saveBlocked();
+    return null;
+  }
+  return b || null;
+};
+export const isBlocked = (phone) => !!norm(phone) && !!live(norm(phone));
+export const blockInfo = (phone) => (norm(phone) ? live(norm(phone)) : null);
+const DUR = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000, forever: 0 };
+const DUR_NAME = { hour: 'שעה', day: 'יום', week: 'שבוע', month: 'חודש', forever: 'לצמיתות' };
+const blockForm = (p, back) => `<form method="post" action="/admin/block"><input type="hidden" name="p" value="${esc(p)}">${back ? '<input type="hidden" name="back" value="1">' : ''}
+<input name="reason" maxlength="200" placeholder="סיבת החסימה (תוקרא למתקשר)" style="width:55%"> <select name="d">${Object.entries(DUR_NAME).map(([k, n]) => `<option value="${k}" ${k === 'day' ? 'selected' : ''}>${n}</option>`).join('')}</select> <button class="red">חסום</button></form>`;
+const blockText = (b) => `${b.until ? `עד ${new Date(b.until).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}` : 'לצמיתות'}${b.reason ? ` · סיבה: ${b.reason}` : ''}`;
 
 // נרשם מה שהמתקשר אמר (חיפוש, שאלה, שם אתר). תוכן מייל לא נרשם לעולם
 function append(rec) {
@@ -167,7 +184,7 @@ function lineContext() {
   const fs_ = folders();
   const today = new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
   const recent = readLog(400).filter((r) => r.q).slice(0, 40).map((r) => `${fmt(r.t)} ${showPhone(r.p)} (${r.k}): ${r.q.slice(0, 120)}`);
-  return `${fs_.length} מספרים התקשרו בסך הכל. היום ${today}. חסומים: ${[...blocked].map(showPhone).join(', ') || 'אין'}. הדברים האחרונים שנאמרו בקו: ${recent.join(' ; ') || 'אין'}`;
+  return `${fs_.length} מספרים התקשרו בסך הכל. היום ${today}. חסומים: ${[...blocked.keys()].map(showPhone).join(', ') || 'אין'}. הדברים האחרונים שנאמרו בקו: ${recent.join(' ; ') || 'אין'}`;
 }
 
 export function addAdminRoutes(app) {
@@ -197,7 +214,7 @@ export function addAdminRoutes(app) {
     const q = String(req.query.q || '').replace(/\D/g, '');
     const list = folders().filter((f) => !q || showPhone(f.p).includes(q));
     const rows = list.map((f) => {
-      const tags = [blocked.has(f.p) ? '<span class="tag red">חסום</span>' : '', db[f.p]?.app || db[f.p]?.google ? '<span class="tag green">מייל מחובר</span>' : ''].join(' ');
+      const tags = [live(f.p) ? '<span class="tag red">חסום</span>' : '', db[f.p]?.app || db[f.p]?.google ? '<span class="tag green">מייל מחובר</span>' : ''].join(' ');
       return `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(f.p)}"><b>${esc(showPhone(f.p))}</b></a></td><td>${f.calls || '-'}</td><td>${f.n}</td><td>${fmt(f.last)}</td><td>${esc(f.lastQ.slice(0, 70))}</td><td>${tags}</td><td><a class="btn" href="/admin/p/${encodeURIComponent(f.p)}">פתח תיק</a></td></tr>`;
     }).join('') || '<tr><td colspan="7">עדיין אין שיחות</td></tr>';
     res.send(shell('ניהול', `${nav}<div class="card"><h1>תיקי מתקשרים (${list.length})</h1>
@@ -219,8 +236,11 @@ export function addAdminRoutes(app) {
       if (r.a) return `${head}<div class="msg bot"><div class="time">${fmtTime(r.t)} · ${esc(r.k)}</div>${esc(r.a)}</div>`;
       return `${head}<div class="msg me"><div class="time">${fmtTime(r.t)} · ${esc(r.k)}</div>${esc(r.q)}</div>`;
     }).join('') || '<p>אין רישומים למספר הזה.</p>';
-    const isB = blocked.has(p);
-    const act = p === 'חסוי' ? '' : `<form method="post" action="/admin/${isB ? 'unblock' : 'block'}"><input type="hidden" name="p" value="${esc(p)}"><input type="hidden" name="back" value="1"><button class="${isB ? '' : 'red'}">${isB ? 'שחרר חסימה' : 'חסום מספר זה'}</button></form>`;
+    const bi = live(p);
+    const isB = !!bi;
+    const act = p === 'חסוי' ? '' : isB
+      ? `<p style="color:#c62828">חסום ${esc(blockText(bi))}</p><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><input type="hidden" name="back" value="1"><button>שחרר חסימה</button></form>`
+      : blockForm(p, true);
     const calls = recs.filter((r) => r.e).length;
     res.send(shell(`תיק ${showPhone(p)}`, `${nav}<div class="card"><h1 dir="ltr" style="text-align:right">${esc(showPhone(p))}</h1>
 <p>${calls} שיחות · ${recs.length - calls} פעולות · ${recs.length ? `ראשונה ${fmt(recs[0].t)} · אחרונה ${fmt(recs[recs.length - 1].t)}` : ''} ${isB ? '<span class="tag red">חסום</span>' : ''} ${db?.app || db?.google ? `<span class="tag green">מייל מחובר</span>` : ''}</p>${act}
@@ -345,9 +365,9 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
   app.get('/admin/settings', (req, res) => {
     if (!gate(req, res)) return;
     const db = usersDb();
-    const bl = [...blocked].map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td><td><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><button>שחרר</button></form></td></tr>`).join('') || '<tr><td>אין חסומים</td></tr>';
+    const bl = [...blocked.keys()].filter((p) => live(p)).map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td><td>${esc(blockText(blocked.get(p)))}</td><td><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><button>שחרר</button></form></td></tr>`).join('') || '<tr><td>אין חסומים</td></tr>';
     const connected = Object.keys(db).filter((p) => db[p]?.app || db[p]?.google);
-    res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr"> <button class="red">חסום</button></form><br><table>${bl}</table></div>
+    res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr" required> <input name="reason" maxlength="200" placeholder="סיבת החסימה (תוקרא למתקשר)"> <select name="d">${Object.entries(DUR_NAME).map(([k, n]) => `<option value="${k}" ${k === 'day' ? 'selected' : ''}>${n}</option>`).join('')}</select> <button class="red">חסום</button></form><br><table>${bl}</table></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
 <div class="card"><h2>קיצורי אתרים לכל המתקשרים</h2><table>${(getSetting('shortcuts', []) || []).map((x, i) => `<tr><td><b>${esc(x.name)}</b></td><td dir="ltr">${esc(x.url)}</td><td><form method="post" action="/admin/shortcut/del"><input type="hidden" name="i" value="${i}"><button class="red">מחק</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table>
 <form method="post" action="/admin/shortcut"><input name="name" placeholder="שם, למשל: חדשות" required> <input name="url" dir="ltr" placeholder="https://..." required> <button>הוסף</button></form></div>
@@ -379,7 +399,8 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     if (!gate(req, res)) return;
     const p = norm(req.body?.p);
     if (p.length >= 9) {
-      blocked.add(p);
+      const d = DUR[req.body?.d] ?? DUR.day;
+      blocked.set(p, { reason: String(req.body?.reason || '').trim().slice(0, 200), until: d ? Date.now() + d : 0, t: Date.now() });
       saveBlocked();
     }
     res.redirect(backTo(req, p));

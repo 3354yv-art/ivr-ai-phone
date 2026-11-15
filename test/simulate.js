@@ -205,8 +205,13 @@ check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file
   check('ניהול: שיחה עם ה-AI עונה ומוסיפה הוראה', ch.includes('הבנתי') && ch.includes('נוספה הוראה') && (await get('/admin/rules')).includes('ענה תמיד בקצרה'));
   const noAuth = await fetch(`${root}/admin/p/501234567`);
   check('ניהול: תיק לא נפתח בלי כניסה', !(await noAuth.text()).includes('msg bot'));
-  const blk = await fetch(`${root}/admin/block`, form({ p: '0501234567', back: '1' }));
+  const blk = await fetch(`${root}/admin/block`, form({ p: '0501234567', back: '1', reason: 'חיפושים לא ראויים', d: 'week' }));
   check('ניהול: חסימה מתוך התיק חוזרת לתיק', blk.status === 302 && /\/admin\/p\/501234567/.test(blk.headers.get('location') || ''));
+  const Bk = await drive('callBk', []);
+  check('חסימה: המתקשר שומע את הסיבה ולכמה זמן', said(Bk.transcript, 'נחסם לעוד 7 ימים') && said(Bk.transcript, 'חיפושים לא ראויים'));
+  await fetch(`${root}/admin/unblock`, form({ p: '0501234567' }));
+  const Ub = await drive('callUb', ['0']);
+  check('חסימה: אחרי שחרור אפשר להתקשר', !said(Ub.transcript, 'נחסם'));
 }
 
 server.close();
