@@ -146,7 +146,7 @@ const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בע�
 // ---------- שלוחה 1: צ'אט ----------
 async function chatMode(call) {
   const history = [];
-  let q = await listen(call, 'מה תרצה לשאול', 25, 'שיחה עם AI');
+  let q = await listen(call, 'כן?', 25, 'שיחה עם AI');
   while (true) {
     if (!q) {
       q = await listen(call, 'לא שמעתי, אפשר לשאול שוב');
@@ -168,12 +168,12 @@ async function chatMode(call) {
     let again = true;
     while (again) {
       await speak(call, answer);
-      const c = await ask(call, 'לשאלה נוספת הקש 1, לשמיעה חוזרת הקש 2, לתפריט הראשי הקש 0', [0, 1, 2], { sec_wait: 6, allow_empty: true, empty_val: '1' });
+      const c = await ask(call, 'להמשך דברו אחרי הצליל. 2 שמיעה חוזרת, 0 תפריט ראשי', [0, 1, 2], { sec_wait: 1, allow_empty: true, empty_val: '1' });
       if (c === '2') continue;
       if (c === '0') return;
       again = false;
     }
-    q = await listen(call, 'מה תרצה לשאול', 25, 'שיחה עם AI');
+    q = await listen(call, 'כן?', 25, 'שיחה עם AI');
   }
 }
 
@@ -779,9 +779,12 @@ async function handlerInner(call) {
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
   logAnswer(call.phone, 'שיחה התחילה', '', true);
-  await call.id_list_message([T((isDonor(call.phone) ? 'שלום לתומך הקו, ותודה שאתה איתנו. ' : 'שלום, ') + 'הגעתם לעוזר החכם בטלפון. כאן אפשר לשאול כל שאלה, לחפש מידע, לגלוש באתרים ולשמוע מייל. בכל שלב אפשר ללחוץ אחת כדי לעצור הקראה ולומר לעוזר מה לעשות. שימו לב, השאלות נרשמות לצורך אבטחה')], { prependToNextAction: true });
+  // ברכה קצרה שאפשר לקטוע בהקשה. מי שלא מקיש - מדבר ישר עם העוזר אחרי הצליל
+  let first = true;
   while (true) {
-    const d = await ask(call, 'לשיחה עם העוזר החכם הקש 1, לחיפוש וגלישה באתרים הקש 2, למייל הקש 3, לאיזור האישי הקש 4, ליציאה הקש 0', [0, 1, 2, 3, 4], { sec_wait: 9 });
+    const hello = first ? `${isDonor(call.phone) ? 'שלום לתומך הקו' : 'שלום'}, הגעתם לעוזר החכם. השיחות נרשמות. ` : '';
+    const d = await ask(call, `${hello}דברו איתי אחרי הצליל, או הקישו: 2 חיפוש ואתרים, 3 מייל, 4 איזור אישי${first ? '' : ', 0 יציאה'}`, [0, 1, 2, 3, 4], { sec_wait: 1, allow_empty: true, empty_val: '1' });
+    first = false;
     if (d === '0') {
       return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
     }
