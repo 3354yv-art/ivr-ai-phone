@@ -2,7 +2,13 @@
 # מפעיל את השרת אם הוא לא רץ, ומתקין בדיקה אוטומטית כל דקה (cron). לא נוגע בכתובת הזמנית.
 APP="$HOME/ivr-ai"
 cd "$APP" || exit 1
-start() { pgrep -f run-server.sh >/dev/null || (setsid nohup ./run-server.sh >/dev/null 2>&1 </dev/null &); }
+start() {
+  pgrep -f run-server.sh >/dev/null || (setsid nohup ./run-server.sh >/dev/null 2>&1 </dev/null &)
+  # מודל מקומי (אם הותקן)
+  if [ -x "$HOME/ollama/bin/ollama" ] && ! pgrep -f "ollama serve" >/dev/null; then
+    (OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=24h setsid nohup "$HOME/ollama/bin/ollama" serve >/tmp/ollama.log 2>&1 </dev/null &)
+  fi
+}
 if [ "$1" = "cron" ]; then start; exit 0; fi
 curl -fsSL https://raw.githubusercontent.com/3354yv-art/ivr-ai-phone/main/keepalive.sh -o "$APP/keepalive.sh" && chmod +x "$APP/keepalive.sh"
 start
