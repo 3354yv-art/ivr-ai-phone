@@ -56,6 +56,9 @@ async function ask(call, text, allowed, opts = {}) {
 
 // ממתין לפעולה ארוכה (ג'מיני, אתר) ומשמיע מוזיקה. ימות לא מחכה יותר מכמה שניות לתשובה,
 // לכן כל שנייה-שתיים חוזרים אליה עם הודעת המתנה קצרה עד שהפעולה מסתיימת.
+// משפטי המתנה טבעיים במקום "אנא המתן" קבוע
+const WAITS = ['רגע, אני בודק', 'שנייה', 'רק רגע', 'בודק ומיד חוזר', 'רגע אחד'];
+
 async function waitFor(call, promise, maxMs = 90000) {
   let state = 'pending';
   let value;
@@ -70,7 +73,7 @@ async function waitFor(call, promise, maxMs = 90000) {
   while (state === 'pending') {
     if (Date.now() - started > maxMs) throw new Error('הפעולה לקחה יותר מדי זמן');
     await call.read(
-      first ? [T('אנא המתן')] : [{ type: 'music_on_hold', data: { musicName: cfg.music, maxSec: 3 } }],
+      first ? [T(WAITS[Math.floor(Math.random() * WAITS.length)])] : [{ type: 'music_on_hold', data: { musicName: cfg.music, maxSec: 3 } }],
       'tap',
       { max_digits: 1, min_digits: 1, sec_wait: 1, allow_empty: true, empty_val: 'None', digits_allowed: [] },
     );
@@ -170,7 +173,9 @@ const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בע�
 // לחיצה על 1 באמצע תשובה עוצרת אותה. "די" / "תפריט" / שתי שתיקות - חזרה לתפריט.
 // העוזר גם מבצע פעולות: חיפוש עדכני, כניסה לאתר, פורום, מייל, זיכרון, הגדרות.
 async function chatMode(call) {
-  const history = [];
+  // ממשיכים את השיחה הקודמת אם היא הייתה ב-12 השעות האחרונות
+  const prev = users.getLastChat(call.phone);
+  const history = prev ? [...prev] : [];
   const persona = () => users.personaOf(call.phone);
   let prompt = call.chatHintGiven ? 'כן?' : 'דברו אחרי הצליל, ובסיום הקישו סולמית';
   call.chatHintGiven = true;
@@ -235,6 +240,7 @@ async function chatMode(call) {
     }
     history.push({ role: 'model', text: answer });
     if (history.length > (isDonor(call.phone) ? 40 : 20)) history.splice(0, 2);
+    users.saveLastChat(call.phone, history);
     last = answer;
     await speak(call, answer);
   }
@@ -1164,7 +1170,8 @@ async function handlerInner(call) {
   let first = true;
   let silent = 0;
   while (true) {
-    const hello = first ? `${isDonor(call.phone) ? 'שלום לתומך הקו' : 'שלום'}, הגעתם לעוזר החכם. השיחות נרשמות. ` : '';
+    const nm = users.nameOf(call.phone);
+    const hello = first ? `שלום${nm ? ` ${nm}` : ''}${isDonor(call.phone) ? ', ותודה שאתה מתומכי הקו' : ''}, הגעתם לעוזר החכם. השיחות נרשמות. ` : '';
     const role = roleOf(call.phone);
     const d = await ask(call, `${hello}לשיחה עם העוזר, הקישו 1. לחיפוש ואתרים, 2. למייל, 3. לאיזור האישי, 4.${role ? ' לניהול, 9.' : ''} ליציאה, 0`, role ? [0, 1, 2, 3, 4, 9] : [0, 1, 2, 3, 4], { sec_wait: 6, allow_empty: true, empty_val: 'E' });
     first = false;

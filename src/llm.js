@@ -73,7 +73,8 @@ const LLM = {
     on: () => !!(cfg.cfAccountId && cfg.cfToken),
     call: (m, n) => openai(cf(), cfg.cfToken, cfg.cfModel, m, n),
   },
-  local: { on: () => true, call: (m, n) => ollama(m, n) },
+  // מודל מקומי: רק אם הופעל במפורש (LOCAL_LLM=1), אחרי שנמדד שהוא מהיר מספיק
+  local: { on: () => cfg.localOn, call: (m, n) => ollama(m, n) },
 };
 
 async function openai(base, key, model, messages, max_tokens, extra = {}, timeout = cfg.llmTimeoutMs) {
@@ -97,7 +98,7 @@ async function ollama(messages, num_predict) {
       model: cfg.localModel, messages, stream: false, keep_alive: '24h',
       options: { num_predict, temperature: 0.4, num_ctx: 2048 },
     }),
-    signal: AbortSignal.timeout(180000),
+    signal: AbortSignal.timeout(cfg.localTimeoutMs),
   });
   if (!r.ok) throw new Error(`Ollama ${r.status}`);
   return ((await r.json()).message?.content || '').trim();

@@ -81,7 +81,7 @@ const A = await drive('callA', [
   '0',
 ]);
 check('שיחה א: כל ההקשות נצרכו והשיחה נותקה כראוי', A.used === A.total && ended(A.transcript));
-check('שיחה א: הופעל מצב המתנה עם מוזיקה', said(A.transcript, 'אנא המתן') && said(A.transcript, 'h-ztomao'));
+check('שיחה א: הופעל מצב המתנה עם מוזיקה', /רגע|שנייה|בודק/.test(A.transcript.join(' ')) && said(A.transcript, 'h-ztomao'));
 check('שיחה א: כתובת המייל הוקראה אות אחר אות', said(A.transcript, 'a-david') && said(A.transcript, 'שטרודל'));
 check('שיחה א: אין הודעת תקלה', !said(A.transcript, 'תקלה'));
 
@@ -143,7 +143,7 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const don = await fetch(`${root}/donate`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ k: 'gsk_good1234567890123456789012', phone: '050-1234567', ok: '1' }) });
   check('תרומה: מפתח עם מספר טלפון נקלט', don.status === 200 && (await don.text()).includes('על שם המספר'));
   const H = await drive('callH', ['1', 'שאלה ראשונה', 'שאלה שנייה', 'די', '0']);
-  check('תומך: ברכה אישית ובלי מכסה', said(H.transcript, 'לתומך הקו') && !said(H.transcript, 'הגעת למכסה') && H.used === H.total);
+  check('תומך: ברכה אישית ובלי מכסה', said(H.transcript, 'מתומכי הקו') && !said(H.transcript, 'הגעת למכסה') && H.used === H.total);
   setSetting('dailyLimit', 0);
 }
 

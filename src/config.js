@@ -27,6 +27,8 @@ export const cfg = {
   sttChain: (process.env.STT_CHAIN || 'groq,cloudflare,local').split(',').map((x) => x.trim()),
   ollamaUrl: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
   localModel: process.env.LOCAL_MODEL || 'qwen2.5:3b',
+  localOn: process.env.LOCAL_LLM === '1',
+  localTimeoutMs: Number(process.env.LOCAL_TIMEOUT_MS || 8000),
   sttUrl: process.env.STT_URL || 'http://127.0.0.1:8123',
   geminiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',

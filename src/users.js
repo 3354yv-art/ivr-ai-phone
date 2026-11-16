@@ -197,6 +197,26 @@ export function removeShortcut(phone, i) {
   save();
 }
 
+// שם המתקשר, אם סיפר לעוזר ("קוראים לי משה", "השם שלי משה")
+export function nameOf(phone) {
+  for (const p of getPrefs(phone)) {
+    const m = String(p).match(/(?:קוראים לי|השם שלי|שמי)\s+([\u0590-\u05FFa-zA-Z]{2,15})/);
+    if (m) return m[1];
+  }
+  return '';
+}
+// השיחה האחרונה עם העוזר, כדי להמשיך ממנה בשיחה הבאה (נשמרת 12 שעות)
+export function saveLastChat(phone, history) {
+  const k = normPhone(phone);
+  if (!k) return;
+  db[k] = { ...(db[k] || {}), lastChat: { t: Date.now(), h: history.slice(-8).map((m) => ({ role: m.role, text: String(m.text).slice(0, 600) })) } };
+  save();
+}
+export function getLastChat(phone) {
+  const c = getUser(phone)?.lastChat;
+  return c && Date.now() - c.t < 12 * 3600_000 ? c.h : null;
+}
+
 export const personaOf = (phone) => getPrefs(phone).join('. ');
 
 export function setGoogle(phone, google) {
