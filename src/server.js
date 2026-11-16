@@ -413,7 +413,7 @@ async function forumMode(call, host) {
   };
   const needLogin = async () => {
     if (f.loggedIn) return false;
-    await say(`בשביל זה צריך לחבר את החשבון שלך ב${name}. אפשר לחבר אותו מאתר הניהול`);
+    await say(`בשביל זה צריך לחבר את החשבון שלך ב${name}. אפשר לחבר אותו באיזור האישי באתר`);
     return true;
   };
   const showTopics = async (list, title) => {
@@ -435,7 +435,7 @@ async function forumMode(call, host) {
     return r;
   };
 
-  await say(f.loggedIn ? `נכנסת ל${name}, בחשבון ${f.user.username}` : `נכנסת ל${name} כאורח. כדי לכתוב ולקרוא צ'אטים צריך לחבר את החשבון מאתר הניהול`);
+  await say(f.loggedIn ? `נכנסת ל${name}, בחשבון ${f.user.username}` : `נכנסת ל${name} כאורח. כדי לכתוב ולקרוא צ'אטים צריך לחבר את החשבון באיזור האישי באתר`);
   try {
     await showTopics(await waitFor(call, f.topics(f.loggedIn ? 'unread' : 'recent')), f.loggedIn ? 'נושאים שלא קראת' : 'הנושאים האחרונים');
   } catch (e) {
@@ -989,7 +989,7 @@ async function manageMode(call) {
       }
     } else if (c === '5') {
       const code = createAdminCode(call.phone).split('').join(', ');
-      await speak(call, `הקוד שלך לאתר הניהול הוא: ${code}. אחזור: ${code}. תקף לרבע שעה. נכנסים לכתובת ${spokenSite('admin')}, ובוחרים כניסה עם קוד`);
+      await speak(call, `הקוד שלך לאתר הניהול הוא: ${code}. אחזור: ${code}. תקף לרבע שעה. נכנסים לכתובת ${spokenSite(owner ? 'admin' : 'staff')}, ומזינים את מספר הטלפון ואת הקוד`);
     } else if (owner && c === '6') {
       const r = await ask(call, 'להוספת הוראה, 1. לשמיעת ההוראות, 2. למחיקת הוראה, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
       const rules = listRules();

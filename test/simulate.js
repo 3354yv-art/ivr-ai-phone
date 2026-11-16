@@ -183,15 +183,35 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const St = await drive('callSt', ['9', '6', '5', '0', '0'], '0507777777');
   check('צוות: יש תפריט ניהול, בלי הוראות AI (6 לא קיים)', said(St.transcript, 'תפריט ניהול לצוות הפיקוח') && !said(St.transcript, 'להוראות ל-AI'));
   const code = (St.transcript.join(' ').match(/לאתר הניהול הוא[:,]? ((?:\d, ){5}\d)/) || [])[1]?.replace(/\D/g, '');
-  const lc = await fetch(`${root}/admin/login-code`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0507777777', code: code || '' }) });
+  const lc = await fetch(`${root}/staff/login-code`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0507777777', code: code || '' }) });
   const sc = (lc.headers.get('set-cookie') || '').split(';')[0];
-  const home = await (await fetch(`${root}/admin`, { headers: { cookie: sc } })).text();
-  const rulesPage = await (await fetch(`${root}/admin/rules`, { headers: { cookie: sc } })).text();
-  check('צוות: נכנס לאתר עם קוד, רואה תיקים אבל לא הוראות', sc.startsWith('adm=') && home.includes('צוות פיקוח') && rulesPage.includes('שמור למנהל הקו'));
+  const home = await (await fetch(`${root}/staff`, { headers: { cookie: sc } })).text();
+  const rulesRes = await fetch(`${root}/staff/rules`, { headers: { cookie: sc } });
+  check('צוות: נכנס לאתר הצוות עם קוד, רואה תיקים אבל לא הוראות', sc.startsWith('stf=') && home.includes('צוות הפיקוח') && rulesRes.status === 403);
   const Nb = await drive('callNb', ['0'], '0507654321');
   check('חסום שומע סיבה', said(Nb.transcript, 'הטרדה'));
   adm.unblockPhone('0507654321');
   rules.setSetting('owner', '');
+}
+
+// ---- סיסמה קבועה ואתר צוות נפרד ----
+{
+  const us = await import('../src/users.js');
+  const ad = await import('../src/admin.js');
+  ad.addStaff('0521111111', 'דוד');
+  us.setWebPassword('0521111111', 'staffpass1');
+  const F = (u, o, ck = '') => fetch(`${root}${u}`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: ck }, body: new URLSearchParams(o) });
+  const sl = await F('/staff/login-code', { phone: '0521111111', code: 'staffpass1' });
+  const sck = (sl.headers.get('set-cookie') || '').split(';')[0];
+  check('צוות: כניסה לאתר הצוות עם סיסמה קבועה', sck.startsWith('stf=') && (sl.headers.get('location') || '') === '/staff');
+  const sp = await (await fetch(`${root}/staff`, { headers: { cookie: sck } })).text();
+  check('צוות: האתר הנפרד מציג תיקים עם קישורים ל-/staff', sp.includes('אתר צוות הפיקוח') && sp.includes('href="/staff/p/') && !sp.includes('href="/admin'));
+  const sr = await fetch(`${root}/staff/rules`, { headers: { cookie: sck } });
+  check('צוות: אין גישה להוראות ל-AI', sr.status === 403);
+  const al = await F('/admin/login-code', { phone: '0521111111', code: 'staffpass1' });
+  check('צוות: אי אפשר להיכנס לאתר המנהל', (al.headers.get('location') || '').includes('e=1'));
+  const ml = await F('/my/login', { phone: '0521111111', code: 'staffpass1' });
+  check('סיסמה קבועה: נכנסים גם לאיזור האישי', (ml.headers.get('set-cookie') || '').startsWith('my='));
 }
 
 // ---- אבטחה ----

@@ -8,7 +8,7 @@ import { listRules, addRule, removeRule, getSetting, setSetting } from './rules.
 import { adminChat } from './ai.js';
 import { keyStats } from './llm.js';
 import { Forum, FORUMS, dropForum } from './nodebb.js';
-import { setSiteAccount, removeSiteAccount, siteAccounts } from './users.js';
+import { setSiteAccount, removeSiteAccount, siteAccounts, checkWebPassword } from './users.js';
 
 // ---------- יומן חיפושים וחסימות (נשמר בקבצים בשרת בלבד) ----------
 const logFile = () => path.join(cfg.dataDir, 'queries.jsonl');
@@ -167,8 +167,10 @@ const cookieOf = (req, n) => {
   const m = String(req.headers.cookie || '').match(new RegExp(`(?:^|; )${n}=([^;]+)`));
   return m ? m[1] : '';
 };
+// באתר הצוות (/staff) העוגייה נקראת אחרת, כך ששני האתרים נפרדים לגמרי
+const sidOf = (req) => cookieOf(req, req.staffSite ? 'stf' : 'adm');
 const loggedIn = (req) => {
-  const s = sessions.get(cookieOf(req, 'adm'));
+  const s = sessions.get(sidOf(req));
   return s && s.until > Date.now() ? s.role : null;
 };
 
@@ -185,7 +187,7 @@ const fmt = (t) => new Date(t).toLocaleString('he-IL', { timeZone: 'Asia/Jerusal
 const fmtTime = (t) => new Date(t).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
 const navOwner = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/blocks">חסימות</a><a href="/admin/settings">הגדרות, צוות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
-const navStaff = '<div class="card nav"><b>צוות פיקוח</b> · <a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/blocks">חסימות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navStaff = '<div class="card nav"><b>אתר צוות הפיקוח</b> · <a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/blocks">חסימות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
 const navFor = (role) => (role === 'staff' ? navStaff : navOwner);
 const usersDb = () => {
   try {
@@ -241,30 +243,56 @@ function lineContext() {
 }
 
 export function addAdminRoutes(app) {
+  // אתר נפרד לצוות הפיקוח: /staff. אותם דפים מותרים (תיקים, שיחות, חסימות), בכתובת ובכניסה משלו
+  app.use((req, res, next) => {
+    if (req.path !== '/staff' && !req.path.startsWith('/staff/')) return next();
+    req.staffSite = true;
+    req.url = `/admin${req.url.slice('/staff'.length)}`;
+    const fix = (x) => (typeof x === 'string' ? x.replaceAll('"/admin', '"/staff') : x);
+    const send = res.send.bind(res);
+    res.send = (b) => send(fix(b));
+    const redirect = res.redirect.bind(res);
+    res.redirect = (...a) => {
+      a[a.length - 1] = String(a[a.length - 1]).replace(/^\/admin/, '/staff');
+      return redirect(...a);
+    };
+    const set = res.set.bind(res);
+    res.set = (k, v) => (typeof k === 'object' ? set(k) : set(k, k === 'set-cookie' && typeof v === 'string' ? v.replace(/^adm=/, 'stf=').replace('Path=/admin', 'Path=/staff') : v));
+    next();
+  });
   app.use('/admin', (req, res, next) => {
     res.set({ 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
     next();
   });
   // need: 'staff' (צוות פיקוח ומעלה) או 'owner' (רק מנהל הקו)
   const gate = (req, res, need = 'owner') => {
-    const role = loggedIn(req);
+    let role = loggedIn(req);
+    if (req.staffSite && role) {
+      // באתר הצוות כולם פועלים בהרשאות צוות
+      role = 'staff';
+      if (need === 'owner') {
+        res.status(403).send(shell('אין הרשאה', `${navStaff}<div class="card"><p>הדף הזה לא קיים באתר הצוות.</p></div>`));
+        return false;
+      }
+    }
+    if (!req.staffSite && role === 'staff') {
+      res.status(403).send(shell('אתר הצוות', '<div class="card"><p>אתר הצוות נמצא בכתובת נפרדת: <a href="/staff">/staff</a></p></div>'));
+      return false;
+    }
     if (role === 'owner' || (role === 'staff' && need === 'staff')) {
       req.role = role;
       return true;
-    }
-    if (role === 'staff') {
-      res.status(403).send(shell('אין הרשאה', `${navFor('staff')}<div class="card"><p>הדף הזה שמור למנהל הקו. לצוות הפיקוח יש גישה לתיקים, לשיחות האחרונות ולחסימות.</p></div>`));
-      return false;
     }
     if (req.method !== 'GET') {
       res.status(403).send('אין גישה');
       return false;
     }
     const bad = req.query.e ? '<p style="color:#c62828">פרטים שגויים</p>' : '';
-    const pw = hashEnv() ? `<form method="post" action="/admin/login"><p><input name="u" placeholder="שם משתמש" autocomplete="username" style="width:100%"></p><p><input name="p" type="password" placeholder="סיסמה" autocomplete="current-password" style="width:100%"></p><button>כניסה</button></form><hr>` : '';
-    res.send(shell('כניסה', `<div class="card" style="max-width:380px"><h1>כניסה לניהול</h1>${bad}${pw}
-<p><b>כניסה עם קוד מהקו</b> (למנהל ולצוות הפיקוח): התקשרו לקו, הקישו 9 לניהול ואז 5. הקו יקריא קוד.</p>
-<form method="post" action="/admin/login-code"><p><input name="phone" inputmode="tel" placeholder="מספר הטלפון" style="width:100%" required></p><p><input name="code" inputmode="numeric" maxlength="6" placeholder="קוד בן 6 ספרות" style="width:100%" required></p><button>כניסה עם קוד</button></form></div>`));
+    const pw = !req.staffSite && hashEnv() ? `<form method="post" action="/admin/login"><p><input name="u" placeholder="שם משתמש" autocomplete="username" style="width:100%"></p><p><input name="p" type="password" placeholder="סיסמה" autocomplete="current-password" style="width:100%"></p><button>כניסה</button></form><hr>` : '';
+    const who = req.staffSite ? 'צוות הפיקוח' : 'מנהל הקו';
+    res.send(shell('כניסה', `<div class="card" style="max-width:400px"><h1>כניסה ל${who}</h1>${bad}${pw}
+<form method="post" action="/admin/login-code"><p><input name="phone" inputmode="tel" placeholder="מספר הטלפון" style="width:100%" required></p><p><input name="code" type="password" placeholder="קוד מהקו, או הסיסמה הקבועה" style="width:100%" required autocomplete="current-password"></p><button>כניסה</button></form>
+<p style="color:#666;font-size:13px">קוד: מתקשרים לקו, מקישים 9 לניהול ואז 5. סיסמה קבועה בוחרים באיזור האישי באתר (<a href="/my">/my</a>), והיא עובדת גם כאן.</p></div>`));
     return false;
   };
 
@@ -432,7 +460,7 @@ ${p === 'חסוי' || req.role !== 'owner' ? '' : accountsCard(p, req.query.m)}<
     res.send(shell('הגדרות', `${navFor(req.role)}<div class="card"><h2>מנהל הקו וצוות פיקוח</h2>
 <form method="post" action="/admin/owner">מספר הטלפון של מנהל הקו (מקבל תפריט ניהול מלא בקו, בהקשה 9): <input name="p" dir="ltr" value="${esc(showPhone(ownerPhone()))}" placeholder="05XXXXXXXX"> <button>שמור</button></form>
 <p>צוות הפיקוח יכול לראות תיקים ושיחות ולחסום או לשחרר מתקשרים, בקו ובאתר. הם לא יכולים לשנות את הוראות ה-AI, ההגדרות, המפתחות או את הצוות.</p>
-<table>${staffRows}</table><form method="post" action="/admin/staff"><input name="p" dir="ltr" placeholder="מספר טלפון" required> <input name="name" placeholder="שם (לא חובה)"> <button>הוסף לצוות</button></form></div>
+<p>לצוות יש אתר נפרד: <a href="/staff" target="_blank">/staff</a>. שם הם רואים תיקים ושיחות, וחוסמים ומשחררים. הם נכנסים עם מספר הטלפון וקוד מהקו (9 ואז 5), או עם סיסמה קבועה שבחרו באיזור האישי.</p><table>${staffRows}</table><form method="post" action="/admin/staff"><input name="p" dir="ltr" placeholder="מספר טלפון" required> <input name="name" placeholder="שם (לא חובה)"> <button>הוסף לצוות</button></form></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
 <div class="card"><h2>קיצורי אתרים לכל המתקשרים</h2><table>${(getSetting('shortcuts', []) || []).map((x, i) => `<tr><td><b>${esc(x.name)}</b></td><td dir="ltr">${esc(x.url)}</td><td><form method="post" action="/admin/shortcut/del"><input type="hidden" name="i" value="${i}"><button class="red">מחק</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table>
 <form method="post" action="/admin/shortcut"><input name="name" placeholder="שם, למשל: חדשות" required> <input name="url" dir="ltr" placeholder="https://..." required> <button>הוסף</button></form></div>
@@ -469,12 +497,16 @@ ${p === 'חסוי' || req.role !== 'owner' ? '' : accountsCard(p, req.query.m)}<
     if (fails.length >= 8) return res.status(429).send(shell('נחסם', '<div class="card"><p>יותר מדי ניסיונות. נסה שוב בעוד רבע שעה.</p></div>'));
     const p = norm(req.body?.phone);
     const c = adminCodes.get(p);
-    const role = roleOf(p);
-    if (!role || !c || Date.now() > c.until || ++c.tries > 5 || c.code !== String(req.body?.code || '').replace(/\D/g, '')) {
+    const real = roleOf(p);
+    // אתר המנהל: רק מנהל הקו. אתר הצוות: הצוות (וגם המנהל)
+    const role = req.staffSite ? (real ? 'staff' : null) : real === 'owner' ? 'owner' : null;
+    const given = String(req.body?.code || '');
+    const codeOk = c && Date.now() <= c.until && ++c.tries <= 5 && c.code === given.replace(/\D/g, '');
+    if (!role || !(codeOk || checkWebPassword(p, given))) {
       fails.push(Date.now());
       return res.redirect('/admin?e=1');
     }
-    adminCodes.delete(p);
+    if (codeOk) adminCodes.delete(p);
     const sid = crypto.randomBytes(32).toString('base64url');
     sessions.set(sid, { until: Date.now() + 12 * 3600_000, role, phone: p });
     res.set('set-cookie', `adm=${sid}; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=43200`);
@@ -494,7 +526,7 @@ ${p === 'חסוי' || req.role !== 'owner' ? '' : accountsCard(p, req.query.m)}<
     res.redirect('/admin');
   });
   app.post('/admin/logout', (req, res) => {
-    sessions.delete(cookieOf(req, 'adm'));
+    sessions.delete(sidOf(req));
     res.set('set-cookie', 'adm=; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=0');
     res.redirect('/admin');
   });
@@ -502,7 +534,7 @@ ${p === 'חסוי' || req.role !== 'owner' ? '' : accountsCard(p, req.query.m)}<
   app.post('/admin/block', (req, res) => {
     if (!gate(req, res, 'staff')) return;
     const p = norm(req.body?.p);
-    blockPhone(p, req.body?.reason, req.body?.d, sessions.get(cookieOf(req, 'adm'))?.phone);
+    blockPhone(p, req.body?.reason, req.body?.d, sessions.get(sidOf(req))?.phone);
     res.redirect(backTo(req, p));
   });
   app.post('/admin/unblock', (req, res) => {

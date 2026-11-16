@@ -65,11 +65,11 @@ export function addMyRoutes(app) {
   app.get('/my', (req, res) => {
     const phone = me(req, res);
     if (!phone) {
-      const e = { wrong: 'הקוד שגוי', expired: 'הקוד פג תוקף או שנוסה יותר מדי פעמים. בקשו קוד חדש בקו', many: 'יותר מדי ניסיונות, נסו שוב בעוד כמה דקות' }[req.query.e] || '';
+      const e = { wrong: 'הקוד או הסיסמה שגויים', expired: 'הקוד פג תוקף או שנוסה יותר מדי פעמים. בקשו קוד חדש בקו', many: 'יותר מדי ניסיונות, נסו שוב בעוד כמה דקות' }[req.query.e] || '';
       return res.send(shell('האיזור האישי', `<div class="card" style="max-width:420px"><h1>האיזור האישי בקו</h1>
 <p>כדי להיכנס, התקשרו לקו, היכנסו לאיזור האישי (מקש 4) והקישו 7. הקו יקריא לכם קוד כניסה.</p>${e ? `<p style="color:#c62828">${e}</p>` : ''}
 <form method="post" action="/my/login"><p><input name="phone" inputmode="tel" placeholder="מספר הטלפון שממנו התקשרתם" style="width:100%" required></p>
-<p><input name="code" inputmode="numeric" maxlength="6" placeholder="קוד בן 6 ספרות" style="width:100%" required autocomplete="one-time-code"></p><button>כניסה</button></form></div>`));
+<p><input name="code" type="password" placeholder="קוד מהקו, או הסיסמה הקבועה שלכם" style="width:100%" required autocomplete="current-password"></p><button>כניסה</button></form><p class="note">אחרי הכניסה הראשונה אפשר לבחור סיסמה קבועה, ואז לא צריך קוד בכל פעם.</p></div>`));
     }
     const u = users.getUser(phone) || {};
     const flash = req.query.m ? `<p class="flash">${esc(req.query.m)}</p>` : '';
@@ -92,6 +92,9 @@ export function addMyRoutes(app) {
 <div class="card"><h2>חשבונות באתרים</h2>${forums}<p class="note">הסיסמה נבדקת מול האתר ונשמרת מוצפנת בשרת.</p></div>
 <div class="card"><h2>מה העוזר זוכר עליי</h2><p>העוזר מתאים את התשובות לפי מה שכתוב כאן. אפשר להוסיף, למשל "קוראים לי משה" או "תענה לי תמיד בקצרה".</p><ul>${prefs || '<li>עדיין כלום</li>'}</ul>
 <form method="post" action="/my/pref"><input name="t" maxlength="300" placeholder="משהו שהעוזר צריך לדעת" required style="width:100%"><button>הוסף</button></form></div>
+<div class="card"><h2>סיסמה קבועה לאתר</h2><p>${users.hasWebPassword(phone) ? 'יש לכם סיסמה קבועה. אפשר להחליף אותה כאן.' : 'בחרו סיסמה, ואז תוכלו להיכנס בכל מחשב עם מספר הטלפון והסיסמה, בלי קוד מהקו.'}</p>
+<form method="post" action="/my/password"><input name="pw" type="password" minlength="6" autocomplete="new-password" placeholder="סיסמה חדשה (לפחות 6 תווים)" required style="width:100%"><input name="pw2" type="password" minlength="6" autocomplete="new-password" placeholder="שוב את אותה סיסמה" required style="width:100%"><button>שמור סיסמה</button></form>
+${users.hasWebPassword(phone) ? '<form method="post" action="/my/password/off"><button class="gray">בטל סיסמה קבועה</button></form>' : ''}</div>
 <div class="card"><h2>הגדרות</h2><form method="post" action="/my/settings">
 ${googleVoiceOn() ? `<p>קול העוזר: <select name="voice">${VOICES.map((x) => `<option value="${x.id}" ${((u.settings || {}).voice || '') === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></p>
 <p>מהירות דיבור: <select name="speed">${[['slow', 'איטי'], ['normal', 'רגיל'], ['fast', 'מהיר']].map(([k, n]) => `<option value="${k}" ${((u.settings || {}).speed || 'normal') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></p>` : '<p class="note">בחירת קולות תופעל כשהמנהל יגדיר מפתח של גוגל קלאוד.</p>'}
@@ -106,7 +109,8 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     fails = fails.filter((t) => Date.now() - t < 10 * 60_000);
     if (fails.length > 30) return res.redirect('/my?e=many');
     const phone = users.normPhone(req.body?.phone);
-    const r = phone.length === 9 ? users.checkWebCode(phone, req.body?.code) : 'wrong';
+    let r = phone.length === 9 ? users.checkWebCode(phone, req.body?.code) : 'wrong';
+    if (r !== 'ok' && phone.length === 9 && users.checkWebPassword(phone, req.body?.code)) r = 'ok';
     if (r !== 'ok') {
       fails.push(Date.now());
       return res.redirect(`/my?e=${r}`);
@@ -175,6 +179,21 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     if (!p) return;
     users.addPref(p, req.body?.t);
     back(res, 'נשמר');
+  });
+  app.post('/my/password', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    const a = String(req.body?.pw || '');
+    if (a !== String(req.body?.pw2 || '')) return back(res, 'הסיסמאות לא זהות');
+    if (a.length < 6) return back(res, 'הסיסמה צריכה להיות לפחות 6 תווים');
+    users.setWebPassword(p, a);
+    back(res, 'הסיסמה נשמרה. מעכשיו אפשר להיכנס עם מספר הטלפון והסיסמה');
+  });
+  app.post('/my/password/off', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    users.clearWebPassword(p);
+    back(res, 'הסיסמה הקבועה בוטלה');
   });
   app.post('/my/settings', (req, res) => {
     const p = need(req, res);

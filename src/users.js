@@ -110,6 +110,29 @@ export function disconnectMail(phone) {
   save();
 }
 
+// סיסמה קבועה לאתר (במקום קוד בכל פעם). נשמרת כגיבוב scrypt, לא כטקסט
+export function setWebPassword(phone, pw) {
+  const k = normPhone(phone);
+  if (!k || String(pw).length < 6) return false;
+  const salt = crypto.randomBytes(16);
+  db[k] = { ...(db[k] || {}), webPass: `${salt.toString('hex')}:${crypto.scryptSync(String(pw), salt, 64).toString('hex')}` };
+  save();
+  return true;
+}
+export function checkWebPassword(phone, pw) {
+  const h = getUser(phone)?.webPass;
+  if (!h || !pw) return false;
+  const [s, x] = h.split(':');
+  const got = crypto.scryptSync(String(pw), Buffer.from(s, 'hex'), 64);
+  const want = Buffer.from(x, 'hex');
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+export const hasWebPassword = (phone) => !!getUser(phone)?.webPass;
+export function clearWebPassword(phone) {
+  const k = normPhone(phone);
+  if (db[k]?.webPass) { delete db[k].webPass; save(); }
+}
+
 // קוד כניסה לאיזור האישי באתר: הקו מקריא אותו למתקשר, וכך מוכח שהמספר שלו
 const webCodes = new Map(); // phone -> { code, until, tries }
 export function createWebCode(phone) {
