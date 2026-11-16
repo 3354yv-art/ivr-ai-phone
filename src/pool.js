@@ -44,16 +44,14 @@ const secure = (req) => req.secure || req.headers['x-forwarded-proto'] === 'http
 const PERKS = '<ul><li><b>מהירות בעדיפות:</b> המפתח שלך משמש קודם כל אותך, כך שאתה לא מחכה בתור גם כשהקו עמוס</li><li><b>שאלות ללא הגבלה</b> ביום</li><li><b>תשובות מורחבות</b> ומפורטות יותר</li><li><b>זיכרון גדול:</b> העוזר זוכר עליך עד 50 דברים (במקום 15) ואת כל השיחה</li><li>ברכה אישית בכל כניסה לקו</li></ul>';
 
 export function addPoolRoutes(app) {
+  // דף פשוט: רק מפתח ומספר טלפון, בלי שום דבר אחר
   app.get('/donate', (req, res) => {
-    const warn = secure(req) ? '' : '<p style="color:#b26a00;font-size:14px">שימו לב: החיבור לדף הזה עדיין לא מוצפן. מומלץ ליצור ב-Groq מפתח נפרד רק בשביל הקו, כך שאפשר למחוק אותו שם בכל רגע.</p>';
-    res.send(page(`<h2>הצטרפו לתומכי הקו</h2>
-<p>הקו פועל בזכות מפתחות חינמיים של Groq. מי שתורם מפתח עוזר לקו להישאר מהיר לכולם, ומקבל הטבות של תומך:</p>${PERKS}
-<p><b>איך משיגים מפתח (חינם, דקה):</b> נכנסים ל-console.groq.com, מתחברים, בוחרים API Keys ולוחצים Create API Key. מעתיקים את המפתח (מתחיל ב-gsk_) ומדביקים כאן.</p>
-<p><b>שימו לב:</b> השימוש במפתח נספר על החשבון שלכם ב-Groq, במסגרת החינמית שלו. המפתח נשמר בשרת בלבד ולא מוצג לאף אחד. אפשר לבקש את הסרתו בכל עת.</p>${warn}
+    res.set('cache-control', 'no-store').send(page(`<h2 style="margin-top:0">הוספת מפתח Groq</h2>
 <form method="post" action="/donate">
-<p><input name="k" type="password" autocomplete="off" placeholder="gsk_..." style="width:100%;padding:10px;font-size:16px"></p>
-<p><b>על שם איזה מספר טלפון?</b> המספר הזה יקבל גישה מלאה וכל ההטבות.<br><input name="phone" inputmode="tel" required placeholder="למשל 0501234567" style="width:100%;padding:10px;font-size:16px"></p>
-<p><label><input type="checkbox" name="ok" value="1"> אני מבין ומסכים שהקו ישתמש במפתח שלי</label></p><button>הצטרף לתומכים</button></form>`));
+<p><input name="k" type="password" autocomplete="off" required placeholder="המפתח (מתחיל ב-gsk_)" style="width:100%;padding:10px;font-size:16px;box-sizing:border-box"></p>
+<p><input name="phone" inputmode="tel" required placeholder="על שם איזה מספר טלפון" style="width:100%;padding:10px;font-size:16px;box-sizing:border-box"></p>
+<p><label><input type="checkbox" name="ok" value="1" required> אני מסכים שהקו ישתמש במפתח שלי</label></p><button style="width:100%">שלח</button></form>
+<p style="color:#666;font-size:13px">מפתח חינמי משיגים ב-console.groq.com, בלשונית API Keys.</p>`));
   });
   app.post('/donate', async (req, res) => {
     const k = String(req.body?.k || '').trim();
@@ -70,6 +68,6 @@ export function addPoolRoutes(app) {
     if (!(await valid(k))) return res.status(400).send(page('<p>המפתח לא עובד מול Groq. בדקו שהעתקתם אותו במלואו.</p>'));
     pool.push({ key: k, t: Date.now(), ...(phone ? { phone: np(phone) } : {}) });
     save();
-    res.send(page(`<h2>תודה רבה!</h2><p>המפתח נקלט (מסתיים ב-${esc(k.slice(-4))}).</p>${phone ? `<p>מעכשיו המספר ${esc(np(phone))} מקבל את הטבות התומכים:</p>${PERKS}` : '<p>לא הזנתם מספר טלפון, ולכן אין הטבות אישיות. אפשר לחזור לדף ולהזין את אותו מפתח עם המספר.</p>'}`));
+    res.send(page(`<h2>תודה רבה!</h2><p>המפתח נקלט, על שם המספר ${esc(np(phone))}.</p>`));
   });
 }

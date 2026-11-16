@@ -133,6 +133,25 @@ export function clearWebPassword(phone) {
   if (db[k]?.webPass) { delete db[k].webPass; save(); }
 }
 
+// שם משתמש לאתר (ייחודי). מאפשר להיכנס עם שם במקום מספר טלפון
+const unorm = (n) => String(n || '').normalize('NFC').trim().toLowerCase();
+export function findPhoneByUsername(name) {
+  const n = unorm(name);
+  if (!n) return '';
+  return Object.keys(db).find((k) => db[k]?.username && unorm(db[k].username) === n) || '';
+}
+export function setUsername(phone, name) {
+  const k = normPhone(phone);
+  const n = String(name || '').normalize('NFC').trim();
+  if (!k || n.length < 2 || n.length > 30 || /^\d+$/.test(n)) return 'invalid';
+  const other = findPhoneByUsername(n);
+  if (other && other !== k) return 'taken';
+  db[k] = { ...(db[k] || {}), username: n };
+  save();
+  return 'ok';
+}
+export const usernameOf = (phone) => getUser(phone)?.username || '';
+
 // קוד כניסה לאיזור האישי באתר: הקו מקריא אותו למתקשר, וכך מוכח שהמספר שלו
 const webCodes = new Map(); // phone -> { code, until, tries }
 export function createWebCode(phone) {

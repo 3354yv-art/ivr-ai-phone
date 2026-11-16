@@ -141,7 +141,7 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const G = await drive('callG', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0']);
   check('מכסה: מי שאינו תומך נעצר אחרי המכסה ושומע איך להצטרף', said(G.transcript, 'הגעת למכסה'));
   const don = await fetch(`${root}/donate`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ k: 'gsk_good1234567890123456789012', phone: '050-1234567', ok: '1' }) });
-  check('תרומה: מפתח עם מספר טלפון נקלט ומראה את ההטבות', don.status === 200 && (await don.text()).includes('הטבות התומכים'));
+  check('תרומה: מפתח עם מספר טלפון נקלט', don.status === 200 && (await don.text()).includes('על שם המספר'));
   const H = await drive('callH', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0', '0']);
   check('תומך: ברכה אישית ובלי מכסה', said(H.transcript, 'לתומך הקו') && !said(H.transcript, 'הגעת למכסה') && H.used === H.total);
   setSetting('dailyLimit', 0);
@@ -212,6 +212,32 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('צוות: אי אפשר להיכנס לאתר המנהל', (al.headers.get('location') || '').includes('e=1'));
   const ml = await F('/my/login', { phone: '0521111111', code: 'staffpass1' });
   check('סיסמה קבועה: נכנסים גם לאיזור האישי', (ml.headers.get('set-cookie') || '').startsWith('my='));
+}
+
+// ---- אתר אחד לכולם: הרשמה וכניסה שמפנה כל אחד למקום שלו ----
+{
+  const us = await import('../src/users.js');
+  const ad = await import('../src/admin.js');
+  const P = (u, o) => fetch(`${root}${u}`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(o) });
+  const home = await (await fetch(`${root}/`)).text();
+  check('דף ראשי: טופס כניסה אחד עם הרשמה ומפתח', home.includes('action="/login"') && home.includes('/register') && home.includes('/donate'));
+  const code = us.createWebCode('0533333333');
+  const reg = await P('/register', { phone: '0533333333', code, user: 'משה כהן', pw: 'moshe123', pw2: 'moshe123' });
+  check('הרשמה: עם קוד מהקו, שם משתמש וסיסמה', (reg.headers.get('location') || '').includes('ok=1') && us.findPhoneByUsername('משה כהן') === '533333333');
+  const taken = await P('/register', { phone: '0544444444', code: us.createWebCode('0544444444'), user: 'משה כהן', pw: 'abcdef1', pw2: 'abcdef1' });
+  check('הרשמה: שם תפוס נדחה', (taken.headers.get('location') || '').includes('e=taken'));
+  const lu = await P('/login', { id: 'משה כהן', pw: 'moshe123' });
+  check('כניסה: משתמש רגיל מגיע לאיזור האישי', lu.headers.get('location') === '/my' && (lu.headers.get('set-cookie') || '').startsWith('my='));
+  ad.addStaff('0533333333', 'משה');
+  const ls = await P('/login', { id: '0533333333', pw: 'moshe123' });
+  check('כניסה: צוות פיקוח מגיע לאתר הצוות', ls.headers.get('location') === '/staff' && (ls.headers.get('set-cookie') || '').startsWith('stf='));
+  ad.removeStaff('0533333333');
+  const lo = await P('/login', { id: 'יהונתן', pw: 'pass12345' });
+  check('כניסה: מנהל הקו מגיע לאתר המנהלים', lo.headers.get('location') === '/admin' && (lo.headers.get('set-cookie') || '').startsWith('adm='));
+  const bad = await P('/login', { id: 'משה כהן', pw: 'nope' });
+  check('כניסה: סיסמה שגויה נדחית', (bad.headers.get('location') || '').includes('e=1'));
+  const dn = await (await fetch(`${root}/donate`)).text();
+  check('דף מפתח: רק מפתח ומספר טלפון', dn.includes('name="k"') && dn.includes('name="phone"') && !dn.includes('הטבות'));
 }
 
 // ---- אבטחה ----

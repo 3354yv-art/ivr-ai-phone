@@ -137,6 +137,22 @@ export function createAdminCode(phone) {
   return code;
 }
 
+export function checkAdminCode(phone, code) {
+  const p = norm(phone);
+  const c = adminCodes.get(p);
+  if (!c || Date.now() > c.until || ++c.tries > 5 || c.code !== String(code || '').replace(/\D/g, '')) return false;
+  adminCodes.delete(p);
+  return true;
+}
+// פתיחת חיבור לאתר המנהל או לאתר הצוות (לכניסה מהדף הראשי)
+export function openAdminSession(role, phone = '') {
+  const sid = crypto.randomBytes(32).toString('base64url');
+  sessions.set(sid, { until: Date.now() + 12 * 3600_000, role, phone: norm(phone) });
+  return role === 'owner'
+    ? { cookie: `adm=${sid}; HttpOnly; SameSite=Lax; Path=/admin; Max-Age=43200`, to: '/admin' }
+    : { cookie: `stf=${sid}; HttpOnly; SameSite=Lax; Path=/staff; Max-Age=43200`, to: '/staff' };
+}
+
 // ---------- פעולות ניהול (משותפות לאתר ולקו) ----------
 const DUR = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000, forever: 0 };
 const DUR_NAME = { hour: 'שעה', day: 'יום', week: 'שבוע', month: 'חודש', forever: 'לצמיתות' };
@@ -287,12 +303,8 @@ export function addAdminRoutes(app) {
       res.status(403).send('אין גישה');
       return false;
     }
-    const bad = req.query.e ? '<p style="color:#c62828">פרטים שגויים</p>' : '';
-    const pw = !req.staffSite && hashEnv() ? `<form method="post" action="/admin/login"><p><input name="u" placeholder="שם משתמש" autocomplete="username" style="width:100%"></p><p><input name="p" type="password" placeholder="סיסמה" autocomplete="current-password" style="width:100%"></p><button>כניסה</button></form><hr>` : '';
-    const who = req.staffSite ? 'צוות הפיקוח' : 'מנהל הקו';
-    res.send(shell('כניסה', `<div class="card" style="max-width:400px"><h1>כניסה ל${who}</h1>${bad}${pw}
-<form method="post" action="/admin/login-code"><p><input name="phone" inputmode="tel" placeholder="מספר הטלפון" style="width:100%" required></p><p><input name="code" type="password" placeholder="קוד מהקו, או הסיסמה הקבועה" style="width:100%" required autocomplete="current-password"></p><button>כניסה</button></form>
-<p style="color:#666;font-size:13px">קוד: מתקשרים לקו, מקישים 9 לניהול ואז 5. סיסמה קבועה בוחרים באיזור האישי באתר (<a href="/my">/my</a>), והיא עובדת גם כאן.</p></div>`));
+    // כניסה אחת לכולם בדף הראשי
+    res.redirect('/');
     return false;
   };
 

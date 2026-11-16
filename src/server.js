@@ -19,6 +19,7 @@ import { withCaller } from './ctx.js';
 import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.js';
 import { getSetting, setSetting as setLineSetting, addRule, listRules, removeRule } from './rules.js';
 import { addMyRoutes } from './my.js';
+import { addHomeRoutes } from './home.js';
 import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
@@ -1163,6 +1164,7 @@ function addSetupRoutes(app) {
 
 function addWebRoutes(app) {
   addSetupRoutes(app);
+  addHomeRoutes(app);
   addAdminRoutes(app);
   addMyRoutes(app);
   addPoolRoutes(app);
