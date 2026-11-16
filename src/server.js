@@ -166,36 +166,77 @@ const spokenSite = (p) => `${(cfg.baseUrl || '').replace(/^https?:\/\//, '').rep
 const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מפורטות יותר, וזיכרון גדול יותר. כדי להצטרף, תורמים מפתח חינמי של גרוק. נכנסים לכתובת ${spokenSite('donate')}, באנגלית, ושם יש הסבר של דקה איך להשיג מפתח. בטופס מזינים גם את מספר הטלפון שממנו מתקשרים, וההטבות מתחילות מיד`;
 
 // ---------- שלוחה 1: צ'אט ----------
+// שיחה רציפה עם העוזר: מדברים, הוא עונה, ומיד אפשר לדבר שוב. בלי תפריטים באמצע.
+// לחיצה על 1 באמצע תשובה עוצרת אותה. "די" / "תפריט" / שתי שתיקות - חזרה לתפריט.
+// העוזר גם מבצע פעולות: חיפוש עדכני, כניסה לאתר, פורום, מייל, זיכרון, הגדרות.
 async function chatMode(call) {
   const history = [];
-  let q = await listen(call, 'כן?', 25, 'שיחה עם AI');
+  const persona = () => users.personaOf(call.phone);
+  let prompt = call.chatHintGiven ? 'כן?' : 'דברו אחרי הצליל, ובסיום הקישו סולמית';
+  call.chatHintGiven = true;
+  let silent = 0;
+  let last = '';
   while (true) {
+    const q = await listen(call, prompt, 30, 'שיחה עם AI');
+    prompt = 'כן?';
     if (!q) {
-      q = await listen(call, 'לא שמעתי, אפשר לשאול שוב');
-      if (!q) return;
+      if (++silent >= 2) return;
+      prompt = 'לא שמעתי. אפשר לדבר שוב, או לומר תפריט';
       continue;
     }
-    const mem = q.match(/^\s*(?:תזכור|תזכרי|זכור|זכרי|תרשום|תרשמי)\s*(?:ש|את זה ש|לי ש)?\s*(.{3,})$/);
-    if (mem && call.phone) {
-      users.addPref(call.phone, mem[1]);
-      logAnswer(call.phone, 'נשמר להתאמה אישית', mem[1]);
-      await speak(call, 'רשמתי, אזכור את זה בשיחות הבאות');
-      q = await listen(call, 'מה עוד תרצה לשאול', 25, 'שיחה עם AI');
+    silent = 0;
+    if (/^\s*(תחזור על זה|שוב|עוד פעם|לא שמעתי)\s*[.?!]*\s*$/.test(q) && last) {
+      await speak(call, last);
       continue;
     }
     if (!(await quotaOk(call))) return;
-    const answer = await waitFor(call, ai.chat(history, q, users.personaOf(call.phone)));
-    history.push({ role: 'user', text: q }, { role: 'model', text: answer });
-    if (history.length > (isDonor(call.phone) ? 40 : 20)) history.splice(0, 2);
-    let again = true;
-    while (again) {
-      await speak(call, answer);
-      const c = await ask(call, 'לשאלה נוספת, הקישו 1. לשמיעה חוזרת, 2. לתפריט הראשי, 0', [0, 1, 2], { sec_wait: 6, allow_empty: true, empty_val: '0' });
-      if (c === '2') continue;
-      if (c === '0') return;
-      again = false;
+    const r = await waitFor(call, ai.chat(history, q, persona(), true));
+    history.push({ role: 'user', text: q });
+    let answer = '';
+    switch (r.action) {
+      case 'menu':
+        await speak(call, 'חוזרים לתפריט');
+        return;
+      case 'search': {
+        const res = await waitFor(call, ai.search(r.query || q, persona()));
+        answer = res.answer;
+        break;
+      }
+      case 'site': {
+        const name = r.name || q;
+        const sc = findShortcut(call, name);
+        const url = sc ? sc.url : /מתמחים|mitmachim/i.test(name) ? 'https://mitmachim.top' : await waitFor(call, ai.findSite(name));
+        if (url) {
+          await browse(call, url);
+          answer = 'חזרנו לשיחה. מה עוד?';
+        } else answer = 'לא מצאתי את האתר הזה';
+        break;
+      }
+      case 'forum':
+        await forumMode(call, 'mitmachim.top');
+        answer = 'חזרנו לשיחה. מה עוד?';
+        break;
+      case 'mail':
+        await mailMode(call);
+        answer = 'חזרנו לשיחה. מה עוד?';
+        break;
+      case 'remember':
+        if (call.phone && r.text) {
+          users.addPref(call.phone, r.text);
+          answer = 'רשמתי, אזכור את זה';
+        } else answer = 'לא יכולתי לשמור את זה';
+        break;
+      case 'settings':
+        await settingsMode(call);
+        answer = 'חזרנו לשיחה. מה עוד?';
+        break;
+      default:
+        answer = r.text || 'לא הבנתי, אפשר לומר במילים אחרות?';
     }
-    q = await listen(call, 'כן?', 25, 'שיחה עם AI');
+    history.push({ role: 'model', text: answer });
+    if (history.length > (isDonor(call.phone) ? 40 : 20)) history.splice(0, 2);
+    last = answer;
+    await speak(call, answer);
   }
 }
 
@@ -370,6 +411,42 @@ async function browse(call, startUrl) {
   }
 }
 
+// חיבור חשבון בפורום דרך הטלפון: שם משתמש בקול או מייל בהקלדה, וסיסמה בהקלדה. נבדק מול הפורום לפני שמירה
+async function forumConnect(call, host) {
+  const name = FORUMS[host] || host;
+  if (!call.phone) return speak(call, 'אי אפשר לחבר חשבון משיחה ממספר חסוי');
+  const kb = { typing_playback_mode: 'EmailKeyboard', min_digits: 1, sec_wait: 40, allow_empty: true, empty_val: 'None' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const how = await ask(call, `חיבור החשבון ב${name}. כדי להקליד את כתובת המייל של החשבון באנגלית, הקישו 1. כדי לומר את שם המשתמש בקול, 2. לחזרה, 0`, [0, 1, 2], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+    if (how === '0') return;
+    let user = '';
+    if (how === '1') {
+      const t = await call.read([await say(call, 'הקלידו את כתובת המייל, ובסיום סולמית')], 'tap', kb);
+      user = t && t !== 'None' ? String(t).trim() : '';
+    } else {
+      const t = await listen(call, 'אמרו את שם המשתמש שלכם בפורום', 10, null);
+      if (t) {
+        const ok = await ask(call, `שמעתי: ${t}. אם נכון, הקישו 1. לנסות שוב, 2`, [1, 2], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+        if (ok === '1') user = t.replace(/[.,!?]+$/, '').trim();
+      }
+    }
+    if (!user) continue;
+    const p = await call.read([await say(call, 'עכשיו הקלידו את הסיסמה, ובסיום סולמית')], 'tap', kb);
+    const pw = p && p !== 'None' ? String(p) : '';
+    if (!pw) continue;
+    try {
+      const f = new (await import('./nodebb.js')).Forum(host);
+      const me = await waitFor(call, f.login(user, pw));
+      users.setSiteAccount(call.phone, host, user, pw);
+      dropForum(call.phone, host);
+      return speak(call, `החשבון חובר בהצלחה, בתור ${me.username || user}`);
+    } catch (e) {
+      if (isControl(e)) throw e;
+      await speak(call, 'ההתחברות נכשלה. כנראה שם המשתמש או הסיסמה לא נכונים. אפשר לנסות שוב, או לחבר באיזור האישי באתר');
+    }
+  }
+}
+
 // ---------- פורום (מתמחים טופ ודומיו): קריאה, כתיבה, צ'אטים ----------
 const nums = ['אחד', 'שתיים', 'שלוש', 'ארבע', 'חמש', 'שש', 'שבע', 'שמונה', 'תשע', 'עשר', 'אחת עשרה', 'שתים עשרה'];
 
@@ -414,7 +491,22 @@ async function forumMode(call, host) {
   };
   const needLogin = async () => {
     if (f.loggedIn) return false;
-    await say(`בשביל זה צריך לחבר את החשבון שלך ב${name}. אפשר לחבר אותו באיזור האישי באתר`);
+    const c = await ask(call, `בשביל זה צריך לחבר את החשבון שלך ב${name}. לחיבור עכשיו, הקישו 1. להמשך בלי, 2`, [1, 2], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+    if (c === '1') {
+      await forumConnect(call, host);
+      const creds2 = users.getSiteAccount(call.phone, host);
+      if (creds2) {
+        try {
+          f = await waitFor(call, forumFor(call.phone, host, creds2));
+          if (f.loggedIn) {
+            await say('מחובר. אפשר לבקש שוב');
+            return true;
+          }
+        } catch (e) {
+          if (isControl(e)) throw e;
+        }
+      }
+    }
     return true;
   };
   const showTopics = async (list, title) => {
@@ -829,13 +921,15 @@ async function personalMode(call) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
-    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור הג׳ימייל הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור ג׳ימייל או מתמחים טופ הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const mine = recentFor(call.phone, 3);
       await speak(call, mine.length ? mine.map((r, i) => `${i + 1}, ${r.q}`).join('. ') : 'עדיין אין חיפושים');
     } else if (c === '2') {
-      await registerFlow(call);
+      const w = await ask(call, 'לחיבור ג׳ימייל, הקישו 1. לחיבור החשבון במתמחים טופ, 2. לחזרה, 0', [0, 1, 2], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+      if (w === '1') await registerFlow(call);
+      else if (w === '2') await forumConnect(call, 'mitmachim.top');
     } else if (c === '3') {
       if (!call.phone) {
         await speak(call, 'לא ניתן לשמור התאמה אישית משיחה ממספר חסוי');

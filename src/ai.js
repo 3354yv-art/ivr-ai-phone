@@ -25,14 +25,48 @@ export async function transcribe(wav) {
   return legacy ? gemini.transcribe(wav) : transcribeChain(wav);
 }
 
-export async function chat(history, userText, persona = '') {
-  if (legacy) return gemini.chat(history, userText);
+// שיחה חופשית עם העוזר. העוזר יכול גם לבקש לבצע פעולה: אז הוא מחזיר שורה אחת שמתחילה ב-@@ ואחריה JSON
+const ACTIONS = ` אתה גם יכול לבצע פעולות בשביל המתקשר. כשהוא מבקש אחת מהן, אל תענה במילים אלא החזר רק שורה אחת: @@ ואחריה JSON:
+@@{"action":"search","query":"..."} - כשהשאלה צריכה מידע עדכני מהרשת (חדשות, מחירים, שעות פתיחה, מזג אוויר, אירועים אחרונים) או כשביקש לחפש
+@@{"action":"site","name":"שם האתר"} - כשביקש להיכנס לאתר
+@@{"action":"forum"} - כשביקש להיכנס לפורום מתמחים טופ (לקרוא, להגיב, צ'אטים)
+@@{"action":"mail"} - כשביקש לשמוע או לשלוח מייל
+@@{"action":"remember","text":"..."} - כשביקש שתזכור משהו עליו
+@@{"action":"settings"} - כשביקש לשנות קול, מהירות או אורך תשובות
+@@{"action":"menu"} - כשביקש לחזור לתפריט, לצאת, או סיים ("די", "תודה, זהו", "ביי")
+בכל מקרה אחר ענה כרגיל, בלי @@.`;
+
+const nowLine = () => ` עכשיו ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} (שעון ישראל).`;
+
+export async function chat(history, userText, persona = '', withActions = false) {
+  if (legacy) {
+    if (withActions) {
+      const c = String(userText);
+      if (/^(די|יציאה|תפריט|ביי)/.test(c)) return { action: 'menu' };
+      if (/^תחפש /.test(c)) return { action: 'search', query: c.slice(5) };
+      if (/מתמחים/.test(c)) return { action: 'forum' };
+      const rm = c.match(/^תזכור\s*ש?(.+)/);
+      if (rm) return { action: 'remember', text: rm[1].trim() };
+    }
+    const t = await gemini.chat(history, userText);
+    return withActions ? { text: t } : t;
+  }
   const messages = [
-    { role: 'system', content: sys(persona) },
+    { role: 'system', content: sys(persona) + nowLine() + (withActions ? ACTIONS : '') },
     ...history.slice(-10).map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
     { role: 'user', content: userText },
   ];
-  return (await complete(messages, 320)) || 'לא הצלחתי לענות על זה';
+  const out = (await complete(messages, 320)) || 'לא הצלחתי לענות על זה';
+  if (!withActions) return out;
+  const m = String(out).match(/@@\s*(\{[\s\S]*\})/);
+  if (m) {
+    try {
+      return JSON.parse(m[1]);
+    } catch {
+      /* לא JSON תקין: מתייחסים כתשובה */
+    }
+  }
+  return { text: String(out).replace(/@@.*$/s, '').trim() || 'לא הצלחתי לענות על זה' };
 }
 
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.

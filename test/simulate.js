@@ -74,7 +74,7 @@ const ended = (t) => t.some((l) => /(go_to_folder=|g-)hangup/.test(l) && !l.incl
 
 // ---- שיחה א: צ'אט, חיפוש, אתר, ואז מייל כשעדיין לא רשום -> הרשמה ----
 const A = await drive('callA', [
-  '1', 'מה זה אבטיח', '0',
+  '1', 'מה זה אבטיח', 'די',
   '2', '1', 'אבטיח', '1', '1', 'תסכם לי', 'תחזור אחורה', '0',
   '2', 'example.com', 'תחזור', '0', '0',
   '3', '2', 'david@example.com', '1',   // מייל -> הקשת כתובת -> אישור שליחה
@@ -108,12 +108,12 @@ check('שיחה ב: המייל עובד ללא הרשמה נוספת', B.used ==
 check('שיחה ב: תשובה נשלחה דרך הג׳ימייל', (globalThis.__mockSent || []).some((x) => x.via === 'gmail' && x.body === 'תודה רבה'));
 
 // ---- חיבור בהקשה: כתובת + סיסמת אפליקציה ----
-const C = await drive('callC', ['4', '2', '1', 'dina@gmail.com', 'abcdefghijklmnop', '0', '0']);
+const C = await drive('callC', ['4', '2', '1', '1', 'dina@gmail.com', 'abcdefghijklmnop', '0', '0']);
 const acc = (await import('../src/users.js')).getAppAccount('0501234567');
 check('חיבור בהקשה: כתובת וסיסמת אפליקציה נשמרו (מוצפן)', C.used === C.total && acc?.user === 'dina@gmail.com' && acc?.pass === 'abcdefghijklmnop' && !fs.readFileSync(path.join(process.env.DATA_DIR || '.', 'users.json'), 'utf8').includes('abcdefghijklmnop'));
 
 // ---- התאמה אישית ----
-const D = await drive('callD', ['4', '3', 'קוראים לי משה', '0', '1', 'תזכור שאני גר בירושלים', 'מה זה', '0', '0']);
+const D = await drive('callD', ['4', '3', 'קוראים לי משה', '0', '1', 'תזכור שאני גר בירושלים', 'מה זה', 'די', '0']);
 const prefs = (await import('../src/users.js')).getPrefs('0501234567');
 check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור" בשיחה', ended(D.transcript) && prefs.includes('קוראים לי משה') && prefs.includes('אני גר בירושלים'));
 
@@ -138,11 +138,11 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
 {
   const { setSetting } = await import('../src/rules.js');
   setSetting('dailyLimit', 1);
-  const G = await drive('callG', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0']);
+  const G = await drive('callG', ['1', 'שאלה ראשונה', 'שאלה שנייה', '0']);
   check('מכסה: מי שאינו תומך נעצר אחרי המכסה ושומע איך להצטרף', said(G.transcript, 'הגעת למכסה'));
   const don = await fetch(`${root}/donate`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ k: 'gsk_good1234567890123456789012', phone: '050-1234567', ok: '1' }) });
   check('תרומה: מפתח עם מספר טלפון נקלט', don.status === 200 && (await don.text()).includes('על שם המספר'));
-  const H = await drive('callH', ['1', 'שאלה ראשונה', '1', 'שאלה שנייה', '0', '0']);
+  const H = await drive('callH', ['1', 'שאלה ראשונה', 'שאלה שנייה', 'די', '0']);
   check('תומך: ברכה אישית ובלי מכסה', said(H.transcript, 'לתומך הקו') && !said(H.transcript, 'הגעת למכסה') && H.used === H.total);
   setSetting('dailyLimit', 0);
 }
@@ -238,6 +238,16 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('כניסה: סיסמה שגויה נדחית', (bad.headers.get('location') || '').includes('e=1'));
   const dn = await (await fetch(`${root}/donate`)).text();
   check('דף מפתח: רק מפתח ומספר טלפון', dn.includes('name="k"') && dn.includes('name="phone"') && !dn.includes('הטבות'));
+}
+
+// ---- שיחה רציפה ופורום בטלפון ----
+{
+  const R = await drive('callR', ['1', 'מה זה אבטיח', 'מה זה מלון', 'די', '0']);
+  check('שיחה רציפה: שתי שאלות ברצף בלי תפריט באמצע', R.used === R.total && !said(R.transcript, 'לשאלה נוספת') && said(R.transcript, 'חוזרים לתפריט'));
+  const us = await import('../src/users.js');
+  us.removeSiteAccount('0501234567', 'mitmachim.top');
+  const FC = await drive('callFC', ['4', '2', '2', '1', 'yodea@example.com', 'goodpass', '0', '0']);
+  check('פורום: חיבור החשבון דרך הטלפון', said(FC.transcript, 'החשבון חובר בהצלחה') && us.getSiteAccount('0501234567', 'mitmachim.top')?.username === 'yodea@example.com');
 }
 
 // ---- אבטחה ----
