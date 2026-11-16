@@ -39,8 +39,6 @@ const live = (p) => {
 };
 export const isBlocked = (phone) => !!norm(phone) && !!live(norm(phone));
 export const blockInfo = (phone) => (norm(phone) ? live(norm(phone)) : null);
-const DUR = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000, forever: 0 };
-const DUR_NAME = { hour: 'שעה', day: 'יום', week: 'שבוע', month: 'חודש', forever: 'לצמיתות' };
 const blockForm = (p, back) => `<form method="post" action="/admin/block"><input type="hidden" name="p" value="${esc(p)}">${back ? '<input type="hidden" name="back" value="1">' : ''}
 <input name="reason" maxlength="200" placeholder="סיבת החסימה (תוקרא למתקשר)" style="width:55%"> <select name="d">${Object.entries(DUR_NAME).map(([k, n]) => `<option value="${k}" ${k === 'day' ? 'selected' : ''}>${n}</option>`).join('')}</select> <button class="red">חסום</button></form>`;
 const blockText = (b) => `${b.until ? `עד ${new Date(b.until).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}` : 'לצמיתות'}${b.reason ? ` · סיבה: ${b.reason}` : ''}`;
@@ -110,7 +108,60 @@ export function verifyPassword(name, password) {
   return okPass && okName;
 }
 
-const sessions = new Map();
+// ---------- תפקידים: מנהל הקו (owner) וצוות פיקוח (staff) ----------
+export const ownerPhone = () => norm(getSetting('owner', '') || process.env.OWNER_PHONE || '');
+export const staffList = () => getSetting('staff', []) || [];
+export function roleOf(phone) {
+  const p = norm(phone);
+  if (!p) return null;
+  if (p === ownerPhone()) return 'owner';
+  return staffList().some((s) => s.phone === p) ? 'staff' : null;
+}
+export function addStaff(phone, name = '') {
+  const p = norm(phone);
+  if (p.length < 9 || p === ownerPhone()) return false;
+  setSetting('staff', [...staffList().filter((s) => s.phone !== p), { phone: p, name: String(name).slice(0, 40), t: Date.now() }]);
+  return true;
+}
+export function removeStaff(phone) {
+  const p = norm(phone);
+  const before = staffList().length;
+  setSetting('staff', staffList().filter((s) => s.phone !== p));
+  return staffList().length !== before;
+}
+// קוד כניסה לאתר הניהול שהקו מקריא למנהל או לצוות
+const adminCodes = new Map();
+export function createAdminCode(phone) {
+  const code = String(crypto.randomInt(100000, 1000000));
+  adminCodes.set(norm(phone), { code, until: Date.now() + 15 * 60_000, tries: 0 });
+  return code;
+}
+
+// ---------- פעולות ניהול (משותפות לאתר ולקו) ----------
+const DUR = { hour: 3600_000, day: 86400_000, week: 7 * 86400_000, month: 30 * 86400_000, forever: 0 };
+const DUR_NAME = { hour: 'שעה', day: 'יום', week: 'שבוע', month: 'חודש', forever: 'לצמיתות' };
+export function blockPhone(phone, reason = '', dur = 'day', by = '') {
+  const p = norm(phone);
+  if (p.length < 9 || p === ownerPhone()) return false;
+  const d = DUR[dur] ?? DUR.day;
+  blocked.set(p, { reason: String(reason || '').trim().slice(0, 200), until: d ? Date.now() + d : 0, t: Date.now(), by: norm(by) });
+  saveBlocked();
+  return true;
+}
+export function unblockPhone(phone) {
+  const p = norm(phone);
+  const had = blocked.delete(p);
+  saveBlocked();
+  return had;
+}
+export const recentAll = (n = 10) => readLog(600).filter((r) => r.q).slice(0, n);
+export function phoneSummary(phone) {
+  const p = norm(phone);
+  const recs = readLog(20000).filter((r) => r.p === p);
+  return { calls: recs.filter((r) => r.e).length, last: recs.find((r) => r.q), recent: recs.filter((r) => r.q).slice(0, 5), blocked: live(p) };
+}
+
+const sessions = new Map(); // sid -> { until, role }
 let fails = [];
 const cookieOf = (req, n) => {
   const m = String(req.headers.cookie || '').match(new RegExp(`(?:^|; )${n}=([^;]+)`));
@@ -118,7 +169,7 @@ const cookieOf = (req, n) => {
 };
 const loggedIn = (req) => {
   const s = sessions.get(cookieOf(req, 'adm'));
-  return !!s && s > Date.now();
+  return s && s.until > Date.now() ? s.role : null;
 };
 
 const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -133,7 +184,9 @@ button,.btn{background:#1a73e8;color:#fff;border:0;border-radius:6px;padding:8px
 const fmt = (t) => new Date(t).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
 const fmtTime = (t) => new Date(t).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
-const nav = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/settings">חסימות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navOwner = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/blocks">חסימות</a><a href="/admin/settings">הגדרות, צוות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navStaff = '<div class="card nav"><b>צוות פיקוח</b> · <a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/blocks">חסימות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navFor = (role) => (role === 'staff' ? navStaff : navOwner);
 const usersDb = () => {
   try {
     return JSON.parse(fs.readFileSync(path.join(cfg.dataDir, 'users.json'), 'utf8'));
@@ -192,24 +245,32 @@ export function addAdminRoutes(app) {
     res.set({ 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
     next();
   });
-  const gate = (req, res) => {
-    if (!hashEnv()) {
-      res.status(503).send(shell('ניהול', '<div class="card"><p>סיסמת הניהול עדיין לא הוגדרה בשרת.</p></div>'));
+  // need: 'staff' (צוות פיקוח ומעלה) או 'owner' (רק מנהל הקו)
+  const gate = (req, res, need = 'owner') => {
+    const role = loggedIn(req);
+    if (role === 'owner' || (role === 'staff' && need === 'staff')) {
+      req.role = role;
+      return true;
+    }
+    if (role === 'staff') {
+      res.status(403).send(shell('אין הרשאה', `${navFor('staff')}<div class="card"><p>הדף הזה שמור למנהל הקו. לצוות הפיקוח יש גישה לתיקים, לשיחות האחרונות ולחסימות.</p></div>`));
       return false;
     }
-    if (loggedIn(req)) return true;
     if (req.method !== 'GET') {
       res.status(403).send('אין גישה');
       return false;
     }
     const bad = req.query.e ? '<p style="color:#c62828">פרטים שגויים</p>' : '';
-    res.send(shell('כניסה', `<div class="card" style="max-width:360px"><h1>כניסה לניהול</h1>${bad}<form method="post" action="/admin/login"><p><input name="u" placeholder="שם משתמש" autocomplete="username" style="width:100%"></p><p><input name="p" type="password" placeholder="סיסמה" autocomplete="current-password" style="width:100%"></p><button>כניסה</button></form></div>`));
+    const pw = hashEnv() ? `<form method="post" action="/admin/login"><p><input name="u" placeholder="שם משתמש" autocomplete="username" style="width:100%"></p><p><input name="p" type="password" placeholder="סיסמה" autocomplete="current-password" style="width:100%"></p><button>כניסה</button></form><hr>` : '';
+    res.send(shell('כניסה', `<div class="card" style="max-width:380px"><h1>כניסה לניהול</h1>${bad}${pw}
+<p><b>כניסה עם קוד מהקו</b> (למנהל ולצוות הפיקוח): התקשרו לקו, הקישו 9 לניהול ואז 5. הקו יקריא קוד.</p>
+<form method="post" action="/admin/login-code"><p><input name="phone" inputmode="tel" placeholder="מספר הטלפון" style="width:100%" required></p><p><input name="code" inputmode="numeric" maxlength="6" placeholder="קוד בן 6 ספרות" style="width:100%" required></p><button>כניסה עם קוד</button></form></div>`));
     return false;
   };
 
   // ---- דף ראשי: רשימת תיקים, מספר אחד בשורה אחת ----
   app.get('/admin', (req, res) => {
-    if (!gate(req, res)) return;
+    if (!gate(req, res, 'staff')) return;
     const db = usersDb();
     const q = String(req.query.q || '').replace(/\D/g, '');
     const list = folders().filter((f) => !q || showPhone(f.p).includes(q));
@@ -217,14 +278,14 @@ export function addAdminRoutes(app) {
       const tags = [live(f.p) ? '<span class="tag red">חסום</span>' : '', db[f.p]?.app || db[f.p]?.google ? '<span class="tag green">מייל מחובר</span>' : ''].join(' ');
       return `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(f.p)}"><b>${esc(showPhone(f.p))}</b></a></td><td>${f.calls || '-'}</td><td>${f.n}</td><td>${fmt(f.last)}</td><td>${esc(f.lastQ.slice(0, 70))}</td><td>${tags}</td><td><a class="btn" href="/admin/p/${encodeURIComponent(f.p)}">פתח תיק</a></td></tr>`;
     }).join('') || '<tr><td colspan="7">עדיין אין שיחות</td></tr>';
-    res.send(shell('ניהול', `${nav}<div class="card"><h1>תיקי מתקשרים (${list.length})</h1>
+    res.send(shell('ניהול', `${navFor(req.role)}<div class="card"><h1>תיקי מתקשרים (${list.length})</h1>
 <form method="get" action="/admin"><input name="q" placeholder="חיפוש לפי מספר" dir="ltr" value="${esc(q)}"> <button>חפש</button></form><br>
 <table><tr><th>מספר</th><th>שיחות</th><th>פעולות</th><th>פעילות אחרונה</th><th>נאמר לאחרונה</th><th></th><th></th></tr>${rows}</table></div>`));
   });
 
   // ---- תיק של מספר אחד: כל מה שאמר וכל מה שה-AI ענה, לפי שעה ----
   app.get('/admin/p/:p', (req, res) => {
-    if (!gate(req, res)) return;
+    if (!gate(req, res, 'staff')) return;
     const p = req.params.p === 'חסוי' ? 'חסוי' : norm(req.params.p);
     const recs = readLog().filter((r) => r.p === p).reverse();
     const db = usersDb()[p];
@@ -242,10 +303,10 @@ export function addAdminRoutes(app) {
       ? `<p style="color:#c62828">חסום ${esc(blockText(bi))}</p><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><input type="hidden" name="back" value="1"><button>שחרר חסימה</button></form>`
       : blockForm(p, true);
     const calls = recs.filter((r) => r.e).length;
-    res.send(shell(`תיק ${showPhone(p)}`, `${nav}<div class="card"><h1 dir="ltr" style="text-align:right">${esc(showPhone(p))}</h1>
+    res.send(shell(`תיק ${showPhone(p)}`, `${navFor(req.role)}<div class="card"><h1 dir="ltr" style="text-align:right">${esc(showPhone(p))}</h1>
 <p>${calls} שיחות · ${recs.length - calls} פעולות · ${recs.length ? `ראשונה ${fmt(recs[0].t)} · אחרונה ${fmt(recs[recs.length - 1].t)}` : ''} ${isB ? '<span class="tag red">חסום</span>' : ''} ${db?.app || db?.google ? `<span class="tag green">מייל מחובר</span>` : ''}</p>${act}
 ${db?.prefs?.length ? `<p><b>מה העוזר זוכר על המתקשר:</b> ${db.prefs.map(esc).join(' · ')}</p>` : ''}<p style="color:#666;font-size:13px">בכחול: מה שהמתקשר אמר. באפור: מה שה-AI ענה. תוכן מיילים לא נשמר ולא מוצג.</p></div>
-${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}</div>`));
+${p === 'חסוי' || req.role !== 'owner' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}</div>`));
   });
 
   // חיבור חשבון פורום למספר: הסיסמה נבדקת מול הפורום, ונשמרת מוצפנת. לא מוצגת אף פעם
@@ -276,10 +337,10 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
 
   // ---- שיחות אחרונות: מה שאלו ומה ה-AI ענה, מכל המספרים ----
   app.get('/admin/live', (req, res) => {
-    if (!gate(req, res)) return;
+    if (!gate(req, res, 'staff')) return;
     const recs = readLog(600).filter((r) => !r.e).slice(0, 300);
     const rows = recs.map((r) => `<tr><td style="white-space:nowrap">${fmt(r.t)}</td><td dir="ltr" style="text-align:right;white-space:nowrap"><a href="/admin/p/${encodeURIComponent(r.p)}">${esc(showPhone(r.p))}</a></td><td style="white-space:nowrap">${esc(r.k)}</td><td><div class="msg ${r.a ? 'bot' : 'me'}" style="max-width:100%;margin:0">${esc(r.a || r.q)}</div></td></tr>`).join('') || '<tr><td>אין עדיין</td></tr>';
-    res.send(shell('שיחות אחרונות', `${nav}<div class="card"><h1>שיחות אחרונות</h1><p>בכחול מה שהמתקשרים אמרו, באפור מה שה-AI ענה. החדשים למעלה. <a href="/admin/live">רענן</a></p><table>${rows}</table></div>`));
+    res.send(shell('שיחות אחרונות', `${navFor(req.role)}<div class="card"><h1>שיחות אחרונות</h1><p>בכחול מה שהמתקשרים אמרו, באפור מה שה-AI ענה. החדשים למעלה. <a href="/admin/live">רענן</a></p><table>${rows}</table></div>`));
   });
 
   app.post('/admin/shortcut', (req, res) => {
@@ -310,7 +371,7 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
   app.get('/admin/rules', (req, res) => {
     if (!gate(req, res)) return;
     const rows = listRules().map((r) => `<tr><td>${esc(r.text)}</td><td style="white-space:nowrap">${fmt(r.t)}</td><td><form method="post" action="/admin/rules/remove"><input type="hidden" name="id" value="${esc(r.id)}"><button class="red">מחק</button></form></td></tr>`).join('') || '<tr><td>אין הוראות. ה-AI עונה לפי ההגדרות הרגילות.</td></tr>';
-    res.send(shell('הוראות ל-AI', `${nav}<div class="card"><h1>הוראות ל-AI בקו</h1><p>כל הוראה כאן מחייבת את ה-AI בכל שיחה בקו, מיד, לכל המתקשרים. למשל: "אל תדבר על ספורט", "ענה תמיד בקצרה מאוד", "אם שואלים על המחיר, אמור שהשירות חינם".</p>
+    res.send(shell('הוראות ל-AI', `${navFor(req.role)}<div class="card"><h1>הוראות ל-AI בקו</h1><p>כל הוראה כאן מחייבת את ה-AI בכל שיחה בקו, מיד, לכל המתקשרים. למשל: "אל תדבר על ספורט", "ענה תמיד בקצרה מאוד", "אם שואלים על המחיר, אמור שהשירות חינם".</p>
 <form method="post" action="/admin/rules/add"><textarea name="text" rows="2" style="width:100%" placeholder="כתוב הוראה חדשה" required></textarea><br><br><button>הוסף הוראה</button></form><br>
 <table><tr><th>הוראה</th><th>נוספה</th><th></th></tr>${rows}</table><p>אפשר גם לתת הוראות בשיחה רגילה בדף <a href="/admin/chat">שיחה עם ה-AI</a>.</p></div>`));
   });
@@ -329,7 +390,7 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
   app.get('/admin/chat', (req, res) => {
     if (!gate(req, res)) return;
     const msgs = adminHist.map((m) => `<div class="msg ${m.role === 'admin' ? 'me' : 'bot'}"><div class="time">${fmt(m.t)}</div>${esc(m.text)}${m.note ? `<div class="time" style="margin-top:6px">${esc(m.note)}</div>` : ''}</div>`).join('') || '<p>אפשר לכתוב ל-AI כל דבר: לשאול מה קורה בקו, או לתת הוראות, למשל "מעכשיו אל תענה על שאלות על פוליטיקה". הוא יענה לך, וההוראות שהוא שומר מופיעות בדף ההוראות.</p>';
-    res.send(shell('שיחה עם ה-AI', `${nav}<div class="card"><h1>שיחה עם ה-AI</h1><div id="log">${msgs}</div>
+    res.send(shell('שיחה עם ה-AI', `${navFor(req.role)}<div class="card"><h1>שיחה עם ה-AI</h1><div id="log">${msgs}</div>
 <form method="post" action="/admin/chat" id="f"><textarea name="text" rows="3" style="width:100%" placeholder="כתוב הודעה" required autofocus></textarea><br><br><button id="b">שלח</button>
 <button class="gray" formaction="/admin/chat/clear" formnovalidate>נקה שיחה</button></form></div>
 <script>window.scrollTo(0,document.body.scrollHeight);document.getElementById('f').addEventListener('submit',function(){var b=document.getElementById('b');b.disabled=true;b.textContent='חושב...'});</script>`));
@@ -367,7 +428,11 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     const db = usersDb();
     const bl = [...blocked.keys()].filter((p) => live(p)).map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td><td>${esc(blockText(blocked.get(p)))}</td><td><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><button>שחרר</button></form></td></tr>`).join('') || '<tr><td>אין חסומים</td></tr>';
     const connected = Object.keys(db).filter((p) => db[p]?.app || db[p]?.google);
-    res.send(shell('חסימות ומפתחות', `${nav}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr" required> <input name="reason" maxlength="200" placeholder="סיבת החסימה (תוקרא למתקשר)"> <select name="d">${Object.entries(DUR_NAME).map(([k, n]) => `<option value="${k}" ${k === 'day' ? 'selected' : ''}>${n}</option>`).join('')}</select> <button class="red">חסום</button></form><br><table>${bl}</table></div>
+    const staffRows = staffList().map((x) => `<tr><td dir="ltr" style="text-align:right">${esc(showPhone(x.phone))}</td><td>${esc(x.name || '')}</td><td><form method="post" action="/admin/staff/del"><input type="hidden" name="p" value="${esc(x.phone)}"><button class="red">הסר</button></form></td></tr>`).join('') || '<tr><td>אין עדיין</td></tr>';
+    res.send(shell('הגדרות', `${navFor(req.role)}<div class="card"><h2>מנהל הקו וצוות פיקוח</h2>
+<form method="post" action="/admin/owner">מספר הטלפון של מנהל הקו (מקבל תפריט ניהול מלא בקו, בהקשה 9): <input name="p" dir="ltr" value="${esc(showPhone(ownerPhone()))}" placeholder="05XXXXXXXX"> <button>שמור</button></form>
+<p>צוות הפיקוח יכול לראות תיקים ושיחות ולחסום או לשחרר מתקשרים, בקו ובאתר. הם לא יכולים לשנות את הוראות ה-AI, ההגדרות, המפתחות או את הצוות.</p>
+<table>${staffRows}</table><form method="post" action="/admin/staff"><input name="p" dir="ltr" placeholder="מספר טלפון" required> <input name="name" placeholder="שם (לא חובה)"> <button>הוסף לצוות</button></form></div>
 <div class="card"><h2>מספרים עם מייל מחובר (${connected.length})</h2><p>מוצגים רק מספרים. תוכן המייל והסיסמאות לא נראים כאן.</p><table>${connected.map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>
 <div class="card"><h2>קיצורי אתרים לכל המתקשרים</h2><table>${(getSetting('shortcuts', []) || []).map((x, i) => `<tr><td><b>${esc(x.name)}</b></td><td dir="ltr">${esc(x.url)}</td><td><form method="post" action="/admin/shortcut/del"><input type="hidden" name="i" value="${i}"><button class="red">מחק</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table>
 <form method="post" action="/admin/shortcut"><input name="name" placeholder="שם, למשל: חדשות" required> <input name="url" dir="ltr" placeholder="https://..." required> <button>הוסף</button></form></div>
@@ -375,6 +440,45 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
 <form method="post" action="/admin/limit">מכסת שאלות יומית למי שאינו תומך: <input name="n" type="number" min="0" max="1000" value="${Number(getSetting('dailyLimit', 0))}" style="width:90px"> <button>שמור</button> <span style="color:#666;font-size:13px">(0 = ללא הגבלה)</span></form></div>
 <div class="card"><h2>מצב המפתחות (מאז ההפעלה)</h2><table><tr><th>מפתח</th><th>הצליחו</th><th>נכשלו</th><th>זמן תגובה ממוצע</th><th></th></tr>${keyStats().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td>${k.ok}</td><td>${k.fail}</td><td>${k.ms ? (k.ms / 1000).toFixed(1) + ' שנ׳' : '-'}</td><td>${k.resting ? '<span class="tag red">נח (מגבלת קצב)</span>' : '<span class="tag green">פעיל</span>'}</td></tr>`).join('') || '<tr><td>עדיין לא היו בקשות</td></tr>'}</table></div>
 <div class="card"><h2>מפתחות Groq שנתרמו (${poolList().length})</h2><p>מוצגות רק 4 ספרות אחרונות.</p><table>${poolList().map((k) => `<tr><td dir="ltr">…${esc(k.tail)}</td><td dir="ltr">${k.phone ? `<a href="/admin/p/${encodeURIComponent(norm(k.phone))}">${esc(k.phone)}</a>` : '-'}</td><td><form method="post" action="/admin/pool-remove"><input type="hidden" name="t" value="${esc(k.tail)}"><button class="red">הסר</button></form></td></tr>`).join('') || '<tr><td>אין</td></tr>'}</table></div>`));
+  });
+
+  app.get('/admin/blocks', (req, res) => {
+    if (!gate(req, res, 'staff')) return;
+    const bl = [...blocked.keys()].filter((p) => live(p)).map((p) => `<tr><td dir="ltr" style="text-align:right"><a href="/admin/p/${encodeURIComponent(p)}">${esc(showPhone(p))}</a></td><td>${esc(blockText(blocked.get(p)))}</td><td><form method="post" action="/admin/unblock"><input type="hidden" name="p" value="${esc(p)}"><button>שחרר</button></form></td></tr>`).join('') || '<tr><td>אין חסומים</td></tr>';
+    res.send(shell('חסימות', `${navFor(req.role)}<div class="card"><h2>חסימת מספר</h2><form method="post" action="/admin/block"><input name="p" placeholder="מספר טלפון" dir="ltr" required> <input name="reason" maxlength="200" placeholder="סיבת החסימה (תוקרא למתקשר)"> <select name="d">${Object.entries(DUR_NAME).map(([k, n]) => `<option value="${k}" ${k === 'day' ? 'selected' : ''}>${n}</option>`).join('')}</select> <button class="red">חסום</button></form><br><table>${bl}</table></div>`));
+  });
+  app.post('/admin/staff', (req, res) => {
+    if (!gate(req, res)) return;
+    addStaff(req.body?.p, req.body?.name);
+    res.redirect('/admin/settings');
+  });
+  app.post('/admin/staff/del', (req, res) => {
+    if (!gate(req, res)) return;
+    removeStaff(req.body?.p);
+    res.redirect('/admin/settings');
+  });
+  app.post('/admin/owner', (req, res) => {
+    if (!gate(req, res)) return;
+    const p = norm(req.body?.p);
+    if (p.length >= 9) setSetting('owner', p);
+    res.redirect('/admin/settings');
+  });
+  // כניסה עם קוד שהקו הקריא (למנהל ולצוות)
+  app.post('/admin/login-code', (req, res) => {
+    fails = fails.filter((t) => Date.now() - t < 15 * 60_000);
+    if (fails.length >= 8) return res.status(429).send(shell('נחסם', '<div class="card"><p>יותר מדי ניסיונות. נסה שוב בעוד רבע שעה.</p></div>'));
+    const p = norm(req.body?.phone);
+    const c = adminCodes.get(p);
+    const role = roleOf(p);
+    if (!role || !c || Date.now() > c.until || ++c.tries > 5 || c.code !== String(req.body?.code || '').replace(/\D/g, '')) {
+      fails.push(Date.now());
+      return res.redirect('/admin?e=1');
+    }
+    adminCodes.delete(p);
+    const sid = crypto.randomBytes(32).toString('base64url');
+    sessions.set(sid, { until: Date.now() + 12 * 3600_000, role, phone: p });
+    res.set('set-cookie', `adm=${sid}; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=43200`);
+    res.redirect('/admin');
   });
 
   app.post('/admin/login', (req, res) => {
@@ -385,7 +489,7 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
       return res.redirect('/admin?e=1');
     }
     const sid = crypto.randomBytes(32).toString('base64url');
-    sessions.set(sid, Date.now() + 12 * 3600_000);
+    sessions.set(sid, { until: Date.now() + 12 * 3600_000, role: 'owner' });
     res.set('set-cookie', `adm=${sid}; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=43200`);
     res.redirect('/admin');
   });
@@ -394,22 +498,17 @@ ${p === 'חסוי' ? '' : accountsCard(p, req.query.m)}<div class="card">${body}
     res.set('set-cookie', 'adm=; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=0');
     res.redirect('/admin');
   });
-  const backTo = (req, p) => (req.body?.back ? `/admin/p/${encodeURIComponent(p)}` : '/admin/settings');
+  const backTo = (req, p) => (req.body?.back ? `/admin/p/${encodeURIComponent(p)}` : '/admin/blocks');
   app.post('/admin/block', (req, res) => {
-    if (!gate(req, res)) return;
+    if (!gate(req, res, 'staff')) return;
     const p = norm(req.body?.p);
-    if (p.length >= 9) {
-      const d = DUR[req.body?.d] ?? DUR.day;
-      blocked.set(p, { reason: String(req.body?.reason || '').trim().slice(0, 200), until: d ? Date.now() + d : 0, t: Date.now() });
-      saveBlocked();
-    }
+    blockPhone(p, req.body?.reason, req.body?.d, sessions.get(cookieOf(req, 'adm'))?.phone);
     res.redirect(backTo(req, p));
   });
   app.post('/admin/unblock', (req, res) => {
-    if (!gate(req, res)) return;
+    if (!gate(req, res, 'staff')) return;
     const p = norm(req.body?.p);
-    blocked.delete(p);
-    saveBlocked();
+    unblockPhone(p);
     res.redirect(backTo(req, p));
   });
   app.post('/admin/pool-remove', (req, res) => {

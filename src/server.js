@@ -17,9 +17,9 @@ import { sendLoginEmail } from './notify.js';
 import { addPoolRoutes, allKeys, isDonor } from './pool.js';
 import { withCaller } from './ctx.js';
 import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.js';
-import { getSetting } from './rules.js';
+import { getSetting, setSetting as setLineSetting, addRule, listRules, removeRule } from './rules.js';
 import { addMyRoutes } from './my.js';
-import { addAdminRoutes, blockInfo, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
+import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -934,6 +934,97 @@ async function shortcutEdit(call) {
   }
 }
 
+// ---------- ניהול בקו: למנהל הקו ולצוות הפיקוח ----------
+// הקשת מספר טלפון בסולמית
+async function typePhone(call, prompt) {
+  const t = await call.read([await say(call, prompt)], 'tap', { min_digits: 9, max_digits: 10, sec_wait: 15, allow_empty: true, empty_val: 'X', typing_playback_mode: 'Digits' });
+  const p = String(t || '').replace(/\D/g, '');
+  return p.length >= 9 ? p : '';
+}
+const spellPhone = (p) => showPhone(String(p).replace(/\D/g, '').slice(-9)).split('').join(' ');
+const durKey = { 1: 'hour', 2: 'day', 3: 'week', 4: 'month', 5: 'forever' };
+const durSpoken = { hour: 'לשעה', day: 'ליום', week: 'לשבוע', month: 'לחודש', forever: 'לצמיתות' };
+
+async function manageMode(call) {
+  while (true) {
+    const role = roleOf(call.phone);
+    if (!role) return;
+    const owner = role === 'owner';
+    const c = await ask(call, `תפריט ניהול${owner ? '' : ' לצוות הפיקוח'}. לחסימת מספר, 1. לשחרור חסימה, 2. לשמיעת הפעילות האחרונה, 3. לבדיקת מספר, 4. לקוד כניסה לאתר הניהול, 5.${owner ? ' להוראות ל-AI, 6. לצוות הפיקוח, 7. למכסת שאלות יומית, 8.' : ''} לחזרה, 0`, owner ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+    if (c === '0') return;
+    if (c === '1') {
+      const p = await typePhone(call, 'הקישו את המספר לחסימה, ובסיום סולמית');
+      if (!p) continue;
+      if (roleOf(p) === 'owner') {
+        await speak(call, 'אי אפשר לחסום את מנהל הקו');
+        continue;
+      }
+      const dk = durKey[await ask(call, 'לכמה זמן? לשעה, 1. ליום, 2. לשבוע, 3. לחודש, 4. לצמיתות, 5', [1, 2, 3, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '2' })] || 'day';
+      const reason = await listen(call, 'אמרו את סיבת החסימה, כפי שתוקרא למתקשר. אפשר גם לשתוק', 15, 'ניהול: סיבת חסימה');
+      blockPhone(p, reason, dk, call.phone);
+      logAnswer(call.phone, 'ניהול: חסימה', `${showPhone(p.slice(-9))} ${durSpoken[dk]}${reason ? `: ${reason}` : ''}`);
+      await speak(call, `המספר ${spellPhone(p)} נחסם ${durSpoken[dk]}${reason ? `. הסיבה: ${reason}` : ''}`);
+    } else if (c === '2') {
+      const p = await typePhone(call, 'הקישו את המספר לשחרור, ובסיום סולמית');
+      if (!p) continue;
+      const ok = unblockPhone(p);
+      logAnswer(call.phone, 'ניהול: שחרור חסימה', showPhone(p.slice(-9)));
+      await speak(call, ok ? `החסימה של ${spellPhone(p)} שוחררה` : 'המספר הזה לא היה חסום');
+    } else if (c === '3') {
+      const r = recentAll(8);
+      await speak(call, r.length ? r.map((x) => `ממספר שמסתיים ב ${x.p.slice(-3).split('').join(' ')}, ${x.k}: ${x.q}`).join('. ') : 'אין פעילות');
+    } else if (c === '4') {
+      const p = await typePhone(call, 'הקישו את המספר לבדיקה, ובסיום סולמית');
+      if (!p) continue;
+      const s = phoneSummary(p);
+      await speak(call, `המספר ${spellPhone(p)}. ${s.calls} שיחות. ${s.blocked ? 'המספר חסום' + (s.blocked.reason ? `, בגלל ${s.blocked.reason}` : '') + '.' : ''} ${s.recent.length ? `הדברים האחרונים שאמר: ${s.recent.map((x) => x.q).join('. ')}` : 'אין רישומים'}`);
+      if (!s.blocked && roleOf(p) !== 'owner') {
+        const b = await ask(call, 'לחסימת המספר הזה, 1. לחזרה, 0', [0, 1], { sec_wait: 6, allow_empty: true, empty_val: '0' });
+        if (b === '1') {
+          const dk = durKey[await ask(call, 'לכמה זמן? לשעה, 1. ליום, 2. לשבוע, 3. לחודש, 4. לצמיתות, 5', [1, 2, 3, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '2' })] || 'day';
+          const reason = await listen(call, 'אמרו את סיבת החסימה. אפשר גם לשתוק', 15, 'ניהול: סיבת חסימה');
+          blockPhone(p, reason, dk, call.phone);
+          await speak(call, `נחסם ${durSpoken[dk]}`);
+        }
+      }
+    } else if (c === '5') {
+      const code = createAdminCode(call.phone).split('').join(', ');
+      await speak(call, `הקוד שלך לאתר הניהול הוא: ${code}. אחזור: ${code}. תקף לרבע שעה. נכנסים לכתובת ${spokenSite('admin')}, ובוחרים כניסה עם קוד`);
+    } else if (owner && c === '6') {
+      const r = await ask(call, 'להוספת הוראה, 1. לשמיעת ההוראות, 2. למחיקת הוראה, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+      const rules = listRules();
+      if (r === '1') {
+        const t = await listen(call, 'אמרו את ההוראה ל-AI. למשל: אל תדבר על ספורט', 25, 'ניהול: הוראה');
+        if (t && addRule(t)) await speak(call, `נוספה הוראה: ${t}`);
+      } else if (r === '2') {
+        await speak(call, rules.length ? rules.map((x, i) => `${i + 1}, ${x.text}`).join('. ') : 'אין הוראות');
+      } else if (rules.length) {
+        const n = await ask(call, `${rules.slice(0, 9).map((x, i) => `למחיקת ${x.text}, ${i + 1}`).join('. ')}`, rules.slice(0, 9).map((_, i) => i + 1), { sec_wait: 10, allow_empty: true, empty_val: '0' });
+        const x = rules[Number(n) - 1];
+        if (x && removeRule(x.id)) await speak(call, 'ההוראה נמחקה');
+      }
+    } else if (owner && c === '7') {
+      const r = await ask(call, 'להוספת איש צוות, 1. לשמיעת הצוות, 2. להסרת איש צוות, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
+      if (r === '1') {
+        const p = await typePhone(call, 'הקישו את המספר של איש הצוות, ובסיום סולמית');
+        if (p && addStaff(p)) await speak(call, `המספר ${spellPhone(p)} נוסף לצוות הפיקוח. מעכשיו יש לו תפריט ניהול בהקשה 9`);
+      } else if (r === '2') {
+        const st = staffList();
+        await speak(call, st.length ? st.map((x) => `${x.name ? `${x.name}, ` : ''}${spellPhone(x.phone)}`).join('. ') : 'אין עדיין צוות פיקוח');
+      } else {
+        const p = await typePhone(call, 'הקישו את המספר להסרה מהצוות, ובסיום סולמית');
+        if (p) await speak(call, removeStaff(p) ? 'הוסר מהצוות' : 'המספר הזה לא בצוות');
+      }
+    } else if (owner && c === '8') {
+      const t = await call.read([await say(call, `המכסה היום ${Number(getSetting('dailyLimit', 0)) || 'ללא הגבלה'}. הקישו מספר שאלות ליום למי שאינו תומך, אפס לללא הגבלה, ובסיום סולמית`)], 'tap', { min_digits: 1, max_digits: 4, sec_wait: 10, allow_empty: true, empty_val: 'X' });
+      if (/^\d+$/.test(String(t))) {
+        setLineSetting('dailyLimit', Number(t));
+        await speak(call, Number(t) ? `נשמר: ${t} שאלות ליום` : 'נשמר: ללא הגבלה');
+      }
+    }
+  }
+}
+
 // ---------- חיפוש וכניסה לאתרים ----------
 async function webMode(call) {
   while (true) {
@@ -949,7 +1040,7 @@ async function webMode(call) {
 // ---------- התפריט הראשי ----------
 function authorized(call) {
   if (cfg.key && call.req.query.key !== cfg.key) return false;
-  if (cfg.allowedPhones.length) {
+  if (cfg.allowedPhones.length && !roleOf(call.phone)) {
     const p = String(call.phone || '').replace(/\D/g, '');
     const ok = cfg.allowedPhones.some((a) => a.replace(/\D/g, '').slice(-9) === p.slice(-9) && p.length >= 9);
     if (!ok) return false;
@@ -979,7 +1070,8 @@ async function handlerInner(call) {
   let silent = 0;
   while (true) {
     const hello = first ? `${isDonor(call.phone) ? 'שלום לתומך הקו' : 'שלום'}, הגעתם לעוזר החכם. השיחות נרשמות. ` : '';
-    const d = await ask(call, `${hello}לשיחה עם העוזר, הקישו 1. לחיפוש ואתרים, 2. למייל, 3. לאיזור האישי, 4. ליציאה, 0`, [0, 1, 2, 3, 4], { sec_wait: 6, allow_empty: true, empty_val: 'E' });
+    const role = roleOf(call.phone);
+    const d = await ask(call, `${hello}לשיחה עם העוזר, הקישו 1. לחיפוש ואתרים, 2. למייל, 3. לאיזור האישי, 4.${role ? ' לניהול, 9.' : ''} ליציאה, 0`, role ? [0, 1, 2, 3, 4, 9] : [0, 1, 2, 3, 4], { sec_wait: 6, allow_empty: true, empty_val: 'E' });
     first = false;
     if (d === 'E') {
       if (++silent >= 3) return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
@@ -989,7 +1081,7 @@ async function handlerInner(call) {
     if (d === '0') {
       return call.id_list_message([T('להתראות'), { type: 'go_to_folder', data: 'hangup' }]);
     }
-    const fn = { 1: chatMode, 2: webMode, 3: mailMode, 4: personalMode }[d];
+    const fn = { 1: chatMode, 2: webMode, 3: mailMode, 4: personalMode, 9: role ? manageMode : null }[d];
     if (!fn) continue;
     try {
       await fn(call);

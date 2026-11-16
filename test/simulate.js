@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 process.env.MOCK = '1';
 process.env.IVR_KEY = 'secret';
-process.env.ALLOWED_PHONES = '0501234567';
+process.env.ALLOWED_PHONES = '0501234567,0507654321';
 process.env.MAIL_USER = 'owner@example.com';
 process.env.GOOGLE_CLIENT_ID = 'x';
 process.env.GOOGLE_CLIENT_SECRET = 'y';
@@ -40,12 +40,12 @@ globalThis.__mockDelay = 1200;
 let failures = 0;
 const check = (name, ok) => { console.log((ok ? 'עבר  ' : 'נכשל ') + name); if (!ok) failures++; };
 
-async function drive(callId, script) {
+async function drive(callId, script, phone = '0501234567') {
   globalThis.__mockSpeech = [];
   let si = 0;
   const transcript = [];
   const hit = async (params) => {
-    const q = new URLSearchParams({ ApiCallId: callId, ApiPhone: '0501234567', ApiDID: '035551234', ApiExtension: '1', ...params });
+    const q = new URLSearchParams({ ApiCallId: callId, ApiPhone: phone, ApiDID: '035551234', ApiExtension: '1', ...params });
     return (await fetch(`${base}&${q}`)).text();
   };
   let resp = await hit({});
@@ -169,6 +169,29 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('קו: נכנסים לאתר דרך קיצור', said(S.transcript, 'נפתח הדף') && S.used === S.total && ended(S.transcript));
   const again = await fetch(`${root}/my/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0501234567', code }) });
   check('אתר אישי: קוד חד-פעמי', (again.headers.get('location') || '').includes('e='));
+}
+
+// ---- ניהול בקו: מנהל הקו וצוות פיקוח ----
+{
+  const rules = await import('../src/rules.js');
+  const adm = await import('../src/admin.js');
+  rules.setSetting('owner', '0501234567');
+  const M = await drive('callM', ['9', '1', '0507654321', '3', 'הטרדה', '7', '1', '0507777777', '0', '0']);
+  const bi = adm.blockInfo('0507654321');
+  check('ניהול בקו: המנהל חסם מספר לשבוע עם סיבה', bi?.reason === 'הטרדה' && bi.until > Date.now() + 6 * 86400_000 && M.used === M.total);
+  check('ניהול בקו: המנהל הוסיף איש צוות', adm.roleOf('0507777777') === 'staff');
+  const St = await drive('callSt', ['9', '6', '5', '0', '0'], '0507777777');
+  check('צוות: יש תפריט ניהול, בלי הוראות AI (6 לא קיים)', said(St.transcript, 'תפריט ניהול לצוות הפיקוח') && !said(St.transcript, 'להוראות ל-AI'));
+  const code = (St.transcript.join(' ').match(/לאתר הניהול הוא[:,]? ((?:\d, ){5}\d)/) || [])[1]?.replace(/\D/g, '');
+  const lc = await fetch(`${root}/admin/login-code`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ phone: '0507777777', code: code || '' }) });
+  const sc = (lc.headers.get('set-cookie') || '').split(';')[0];
+  const home = await (await fetch(`${root}/admin`, { headers: { cookie: sc } })).text();
+  const rulesPage = await (await fetch(`${root}/admin/rules`, { headers: { cookie: sc } })).text();
+  check('צוות: נכנס לאתר עם קוד, רואה תיקים אבל לא הוראות', sc.startsWith('adm=') && home.includes('צוות פיקוח') && rulesPage.includes('שמור למנהל הקו'));
+  const Nb = await drive('callNb', ['0'], '0507654321');
+  check('חסום שומע סיבה', said(Nb.transcript, 'הטרדה'));
+  adm.unblockPhone('0507654321');
+  rules.setSetting('owner', '');
 }
 
 // ---- אבטחה ----
