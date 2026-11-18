@@ -172,13 +172,34 @@ async function sttOpenaiStyle(base, key, model, wav) {
   fd.append('model', model);
   fd.append('language', 'he');
   fd.append('temperature', '0');
-  fd.append('prompt', 'שיחה בעברית עם עוזר טלפוני. חיפוש, שאלה, אתר, מייל, פורום מתמחים טופ.');
-  fd.append('response_format', 'json');
+  fd.append('response_format', 'verbose_json');
   const r = await fetch(`${base}/audio/transcriptions`, {
     method: 'POST', headers: { authorization: `Bearer ${key}` }, body: fd, signal: AbortSignal.timeout(6000),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 120)}`);
-  return String((await r.json()).text || '').trim();
+  const j = await r.json();
+  // רק קטעים שבאמת נאמרו: מסננים קטעים שהמודל "המציא" על שקט או רעש
+  if (Array.isArray(j.segments) && j.segments.length) {
+    return j.segments
+      .filter((s) => !(s.no_speech_prob > 0.6 && s.avg_logprob < -0.5) && !(s.avg_logprob < -1.2) && !(s.compression_ratio > 2.6))
+      .map((s) => s.text)
+      .join(' ')
+      .trim();
+  }
+  return String(j.text || '').trim();
+}
+
+// משפטים שמודלי תמלול "שומעים" כשיש שקט או רעש, ואינם דיבור אמיתי
+const PHANTOM = /(תודה שצפיתם|כתוביות|תרגום ע|תמלול ע|הירשמו לערוץ|לייק ו|subtitles|thanks for watching|♪)/i;
+export function cleanTranscript(t) {
+  let s = String(t || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  if (PHANTOM.test(s)) return '';
+  if (!/[\u0590-\u05FFa-zA-Z0-9]/.test(s)) return '';
+  // אותה מילה שחוזרת שוב ושוב היא סימן לתמלול שהשתבש
+  const w = s.split(' ');
+  if (w.length >= 5 && new Set(w).size <= 2) return '';
+  return s;
 }
 
 // זיהוי דיבור של גוגל קלאוד (אם הוגדר מפתח): מדויק מאוד בעברית
@@ -221,5 +242,5 @@ const STT = {
 
 export async function transcribeChain(wav) {
   const chain = cfg.googleCloudKey && !cfg.sttChain.includes('google') ? ['google', ...cfg.sttChain] : cfg.sttChain;
-  return hedged(chain.filter((n) => STT[n]?.on()), (n) => STT[n].call(wav));
+  return cleanTranscript(await hedged(chain.filter((n) => STT[n]?.on()), (n) => STT[n].call(wav)));
 }

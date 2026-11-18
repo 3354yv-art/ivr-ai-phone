@@ -678,13 +678,14 @@ async function forumMode(call, host) {
 // ---------- שלוחה 3: חיפוש ----------
 async function searchMode(call) {
   while (true) {
-    const q = await listen(call, 'מה לחפש בגוגל', 25, 'חיפוש');
+    let q = await listen(call, 'מה לחפש בגוגל', 25, 'חיפוש');
     if (!q) {
       const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
       if (c === '1') continue;
       return;
     }
     if (!(await quotaOk(call))) return;
+    q = await waitFor(call, ai.fixQuery(q));
     const res = await waitFor(call, ai.search(q, users.personaOf(call.phone)));
     let more = true;
     while (more) {

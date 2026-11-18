@@ -69,6 +69,21 @@ export async function chat(history, userText, persona = '', withActions = false)
   return { text: String(out).replace(/@@.*$/s, '').trim() || 'לא הצלחתי לענות על זה' };
 }
 
+// מתקן שאילתת חיפוש שהגיעה מזיהוי דיבור: מילים משובשות או חסרות -> השאילתה שהמתקשר כנראה התכוון אליה
+export async function fixQuery(q) {
+  if (legacy || String(q).length < 3) return q;
+  try {
+    const out = await complete([
+      { role: 'system', content: 'אתה מקבל טקסט מזיהוי דיבור בעברית שעלול להכיל מילים משובשות, חסרות או דומות בצליל. החזר רק את מה שהדובר כנראה התכוון לומר, מתוקן ושלם, כשאילתת חיפוש קצרה. בלי הסברים, בלי מרכאות. אם הטקסט תקין, החזר אותו כמו שהוא.' },
+      { role: 'user', content: String(q) },
+    ], 60);
+    const f = String(out || '').trim().replace(/^["'״]+|["'״]+$/g, '');
+    return f && f.length < 200 ? f : q;
+  } catch {
+    return q;
+  }
+}
+
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
 // תשובות זהות נשמרות 10 דקות כדי לענות מיד.
 export async function search(query, persona = '') {
