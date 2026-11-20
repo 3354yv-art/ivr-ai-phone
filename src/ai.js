@@ -8,10 +8,12 @@ import { rulesPrompt, listRules } from './rules.js';
 import { callerPhone } from './ctx.js';
 import { isDonor } from './pool.js';
 import { getSettings } from './users.js';
+import { roleOf } from './admin.js';
+const rp = () => rulesPrompt(roleOf(callerPhone()));
 
 // ההנחיה הבסיסית + הוראות המנהל (מתעדכן מיד כשהמנהל משנה)
 const LEN = { short: ' המתקשר ביקש תשובות קצרות: משפט או שניים.', long: ' המתקשר ביקש תשובות מפורטות: עד שמונה משפטים.' };
-const sys = (persona = '') => BASE + (LEN[getSettings(callerPhone()).length] || '') + (isDonor(callerPhone()) ? ' המתקשר הוא מתומכי הקו: כשזה מועיל, אפשר לענות בהרחבה ובפירוט רב יותר, עד חמישה משפטים.' : '') + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rulesPrompt();
+const sys = (persona = '') => BASE + (LEN[getSettings(callerPhone()).length] || '') + (isDonor(callerPhone()) ? ' המתקשר הוא מתומכי הקו: כשזה מועיל, אפשר לענות בהרחבה ובפירוט רב יותר, עד חמישה משפטים.' : '') + (persona ? ` מידע והעדפות שהמתקשר ביקש שתזכור ותתאים אליהם את התשובות (אלא אם הם סותרים את הוראות המנהל): ${persona}.` : '') + rp();
 
 // מחכה עד ms; אם לא הסתיים מחזיר fallback (בלי לבטל)
 const within = (p, ms, fallback) => Promise.race([p.catch(() => fallback), new Promise((r) => setTimeout(() => r(fallback), ms))]);
@@ -181,7 +183,7 @@ export async function agent(page, command, history = [], persona = '') {
 {"action":"search","query":"..."} - כשביקש לחפש משהו אחר ברשת${page.interactive ? `
 {"action":"click","index":מספר} - ללחוץ על כפתור, קישור או רכיב מהרשימה (למשל "תלחץ על הוסף לסל", "תיכנס להתחברות")
 {"action":"fill","index":מספר שדה,"text":"מה לכתוב","submit":true/false} - לכתוב בשדה (למשל חיפוש באתר), ו-submit true כדי לשלוח אחרי הכתיבה` : ''}
-אם אין בדף מה שביקש, החזר answer שמסביר בקצרה מה כן יש.` + rulesPrompt() + (persona ? ` על המתקשר: ${persona}` : '') },
+אם אין בדף מה שביקש, החזר answer שמסביר בקצרה מה כן יש.` + rp() + (persona ? ` על המתקשר: ${persona}` : '') },
     { role: 'user', content: `כותרת הדף: ${page.title}\nתוכן הדף: ${page.text.slice(0, 3500)}\n\nקישורים:\n${links}\n\nהשיחה עד עכשיו:\n${histText(history)}\n\nהמתקשר אמר עכשיו: ${command}` },
   ], 220);
   const j = parseJson(out);
@@ -214,7 +216,7 @@ export async function forumAgent(state, command, history = [], persona = '') {
 {"action":"new_topic","category":"שם קטגוריה","title":"כותרת","text":"תוכן"} לפתוח נושא חדש. נסח כותרת ותוכן טובים לפי מה שביקש
 {"action":"chats"} רשימת הצ'אטים | {"action":"send_chat","text":"..."} לשלוח הודעה בצ'אט הפתוח
 {"action":"notifications"} התראות | {"action":"search","query":"..."} חיפוש בפורום
-{"action":"answer","text":"..."} תשובה או שאלת הבהרה קצרה | {"action":"exit"} לצאת מהפורום` + rulesPrompt() + (persona ? ` על המתקשר: ${persona}` : '') },
+{"action":"answer","text":"..."} תשובה או שאלת הבהרה קצרה | {"action":"exit"} לצאת מהפורום` + rp() + (persona ? ` על המתקשר: ${persona}` : '') },
     { role: 'user', content: `מצב נוכחי: ${state.where}\n${state.detail ? `תוכן פתוח: ${state.detail.slice(0, 2500)}\n` : ''}רשימה מוצגת:\n${list || 'אין'}\n\nהשיחה עד עכשיו:\n${histText(history)}\n\nהמתקשר אמר עכשיו: ${command}` },
   ], 450);
   return parseJson(out) || { action: 'answer', text: 'לא הבנתי, אפשר לומר במילים אחרות?' };

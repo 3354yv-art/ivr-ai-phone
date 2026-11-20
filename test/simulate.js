@@ -341,6 +341,19 @@ check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file
   globalThis.__gscript = saved;
 }
 
+// תפקידים: ה-AI מותאם למנהל ולצוות הפיקוח
+{
+  const rl = await import('../src/rules.js');
+  const r1 = rl.addRule('אל תדבר על ספורט');
+  const own = rl.rulesPrompt('owner');
+  const stf = rl.rulesPrompt('staff');
+  const usr = rl.rulesPrompt(null);
+  check('תפקידים: מנהל מקבל הצעה לדבר בכל זאת', own.includes('מנהל הקו עצמו') && own.includes('רוצה שאני כן אוכל לדבר על זה'));
+  check('תפקידים: צוות פיקוח מוכר אבל בלי לעקוף הוראות', stf.includes('צוות הפיקוח') && !stf.includes('רוצה שאני כן אוכל'));
+  check('תפקידים: משתמש רגיל מקבל סירוב רגיל', usr.includes('אי אפשר לעזור') && !usr.includes('מנהל הקו עצמו'));
+  if (r1) rl.removeRule(r1.id);
+}
+
 server.close();
 console.log(failures ? `\n${failures} בדיקות נכשלו` : '\nכל הבדיקות עברו');
 process.exit(failures ? 1 : 0);
