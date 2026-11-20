@@ -65,6 +65,14 @@ export function gsSecret(phone, make) {
   save();
   return s;
 }
+export function phoneByGsSecret(secret) {
+  for (const k of Object.keys(db)) {
+    try {
+      if (db[k]?.gs?.secret && dec(db[k].gs.secret) === secret) return k;
+    } catch { /* פגום */ }
+  }
+  return '';
+}
 export function setGScript(phone, url, email) {
   const k = normPhone(phone);
   if (!k || !db[k]?.gs?.secret) return false;

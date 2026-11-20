@@ -94,18 +94,16 @@ ${(() => {
       const g = users.getGScript(phone);
       if (g) return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p><form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
       const secret = users.gsSecret(phone, gs.newSecret);
-      return `<div class="card"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
-<p>החיבור נעשה עם סקריפט קטן שרץ בחשבון גוגל שלכם בלבד, כך שלא צריך סיסמת אפליקציה ולא אימות דו-שלבי. פעם אחת, כ-3 דקות:</p>
-<ol><li>היכנסו ל-<a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> (נפתח פרויקט חדש).</li>
-<li>מחקו את כל מה שכתוב שם, והדביקו את הקוד מהתיבה למטה (יש כפתור העתקה).</li>
-<li>למעלה לחצו <b>Deploy</b> (פריסה), ואז <b>New deployment</b>. בגלגל השיניים בחרו <b>Web app</b>.</li>
-<li>ב-Execute as בחרו <b>Me</b>, וב-Who has access בחרו <b>Anyone</b>. לחצו Deploy.</li>
-<li>גוגל תבקש אישור: Authorize access, בחרו את החשבון. אם מופיע "Google hasn't verified this app", לחצו Advanced ואז Go to (unsafe). זה הסקריפט שלכם, וזה בטוח.</li>
-<li>העתיקו את ה-Web app URL שמופיע, והדביקו אותו כאן למטה.</li></ol>
-<textarea id="gscode" readonly dir="ltr" style="width:100%;height:120px;font-family:monospace;font-size:12px">${esc(gs.scriptCode(secret))}</textarea>
-<button type="button" onclick="var t=document.getElementById('gscode');t.select();navigator.clipboard&&navigator.clipboard.writeText(t.value);this.textContent='הועתק'">העתק קוד</button>
-<form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" required style="width:100%"><button>חבר</button></form>
-<p class="note">הקוד מכיל מפתח סודי אישי, והסקריפט עונה רק לבקשות עם המפתח הזה. אפשר לנתק בכל רגע, ולמחוק את הסקריפט ב-script.google.com.</p></div>`;
+      return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
+<p>4 צעדים קצרים, פעם אחת:</p>
+<p><button type="button" style="font-size:17px" onclick="var t=document.getElementById('gscode');t.select();navigator.clipboard&&navigator.clipboard.writeText(t.value);this.textContent='✓ הקוד הועתק';window.open('https://script.google.com/home/projects/create','_blank')">1. העתק קוד ופתח את גוגל</button></p>
+<p><b>2.</b> בדף שנפתח: לוחצים בתוך הקוד, <b>Ctrl+A</b> ואז <b>Ctrl+V</b> (מחליף את מה שכתוב בקוד שהעתקתם).</p>
+<p><b>3.</b> לוחצים למעלה מימין <b>Deploy</b> ← <b>New deployment</b> ← בגלגל השיניים <b>Web app</b>. ב-Who has access בוחרים <b>Anyone</b>, ולוחצים <b>Deploy</b>. גוגל תבקש אישור: <b>Authorize access</b>, בוחרים את החשבון. אם כתוב "Google hasn't verified this app": <b>Advanced</b> ← <b>Go to ... (unsafe)</b> ← <b>Allow</b>. זה הסקריפט שלכם.</p>
+<p><b>4.</b> בסוף מופיע קישור תחת Web app. לוחצים עליו, וזהו. החיבור נעשה לבד, והדף הזה יתעדכן.</p>
+<textarea id="gscode" readonly dir="ltr" style="width:100%;height:60px;font-family:monospace;font-size:11px;opacity:.6">${esc(gs.scriptCode(secret))}</textarea>
+<details><summary class="note">הקישור לא עבד? אפשר להדביק אותו כאן</summary><form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%"><button>חבר</button></form></details>
+<p class="note">הקוד מכיל מפתח סודי אישי, והסקריפט עונה רק לקו. אפשר לנתק בכל רגע.</p></div>
+<script>setInterval(function(){fetch('/my/gs-status').then(function(r){return r.text()}).then(function(t){if(t==='1')location.reload()})},4000)</script>`;
     })()}
 <div class="card"><h2>המייל שלי</h2>${mailCard}<p class="note">הסיסמה נבדקת מול ג׳ימייל ונשמרת מוצפנת בשרת. תוכן המיילים לא נשמר.</p></div>
 <div class="card"><h2>חשבונות באתרים</h2>${forums}<p class="note">הסיסמה נבדקת מול האתר ונשמרת מוצפנת בשרת.</p></div>
@@ -181,6 +179,10 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     } catch (e) {
       back(res, `החיבור נכשל: ${String(e.message).slice(0, 140)}`);
     }
+  });
+  app.get('/my/gs-status', (req, res) => {
+    const p = me(req);
+    res.set('cache-control', 'no-store').send(p && users.getGScript(p) ? '1' : '0');
   });
   app.post('/my/gscript/off', (req, res) => {
     const p = need(req, res);

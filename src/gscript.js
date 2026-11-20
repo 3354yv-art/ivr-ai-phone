@@ -4,10 +4,22 @@ import crypto from 'crypto';
 import { cfg } from './config.js';
 
 // הקוד שהמשתמש מדביק ב-script.google.com (עם המפתח הסודי שלו בפנים)
-export function scriptCode(secret) {
+export function scriptCode(secret, server = cfg.baseUrl) {
   return `// העוזר החכם בטלפון - חיבור לחשבון גוגל
 // הסקריפט רץ רק בחשבון שלך, ועונה רק לבקשות עם המפתח הסודי שלך.
 const SECRET = '${secret}';
+const SERVER = '${server}';
+
+// כשפותחים את הקישור של הסקריפט, הוא מתחבר לקו לבד
+function doGet() {
+  let msg;
+  try {
+    const url = ScriptApp.getService().getUrl();
+    const r = UrlFetchApp.fetch(SERVER + '/gs-register', { method: 'post', contentType: 'application/json', payload: JSON.stringify({ secret: SECRET, url: url, email: Session.getActiveUser().getEmail() }), muteHttpExceptions: true });
+    msg = r.getResponseCode() === 200 ? 'החשבון חובר לקו בהצלחה. אפשר לסגור את הדף.' : 'החיבור נכשל: ' + r.getContentText();
+  } catch (err) { msg = 'החיבור נכשל: ' + err; }
+  return HtmlService.createHtmlOutput('<div dir="rtl" style="font-family:Arial;font-size:22px;padding:30px">' + msg + '</div>');
+}
 
 function doPost(e) {
   let req = {};

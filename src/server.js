@@ -1308,6 +1308,20 @@ function addSetupRoutes(app) {
 function addWebRoutes(app) {
   addSetupRoutes(app);
   addHomeRoutes(app);
+  // הסקריפט בחשבון הגוגל של המשתמש נרשם כאן לבד, כשהמשתמש פותח את הקישור שלו
+  app.post('/gs-register', express.json({ limit: '10kb' }), async (req, res) => {
+    const { secret, url, email } = req.body || {};
+    const phone = secret ? users.phoneByGsSecret(String(secret)) : '';
+    if (!phone || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(String(url))) return res.status(403).send('forbidden');
+    try {
+      await gscript.call(url, String(secret), 'ping');
+    } catch (e) {
+      // ייתכן שהסקריפט עוד לא סיים להיפרס; נשמור בכל זאת, הבדיקה תיעשה בשימוש
+      console.warn('gs ping', e.message);
+    }
+    users.setGScript(phone, String(url), String(email || ''));
+    res.send('ok');
+  });
   addAdminRoutes(app);
   addMyRoutes(app);
   addPoolRoutes(app);

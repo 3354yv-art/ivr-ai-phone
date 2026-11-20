@@ -263,6 +263,11 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('סקריפט גוגל: מייל דרך הסקריפט', un[0].from === 'רבקה' && un[0].fromAddr === 'r@x.com');
   us.removeGScript('0501234567');
   check('סקריפט גוגל: ניתוק', !us.getGScript('0501234567'));
+  const s2 = us.gsSecret('0501234567', gs.newSecret);
+  const bad = await fetch(`${root}/gs-register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret: 'wrong', url: 'https://script.google.com/macros/s/x/exec' }) });
+  const good = await fetch(`${root}/gs-register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ secret: s2, url: 'https://script.google.com/macros/s/abc_1/exec', email: 'me@gmail.com' }) });
+  check('סקריפט גוגל: נרשם לבד כשפותחים את הקישור, ומפתח שגוי נדחה', bad.status === 403 && good.status === 200 && us.getGScript('0501234567')?.url.endsWith('abc_1/exec'));
+  us.removeGScript('0501234567');
 }
 
 // ---- אבטחה ----
