@@ -364,6 +364,16 @@ check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file
   check('היסטוריה: זוגות שאלה ותשובה, חדש ראשון', qa.length === 2 && qa[1].q === 'מה מזג האוויר' && qa[1].a === 'שמשי' && qa[0].q === 'מה השעה' && qa[0].a === '');
 }
 
+// הגנת חיוב: מונה חודשי לקול גוגל
+{
+  const v = await import('../src/voice.js');
+  check('מונה קול: סוגי קולות', v.tierOf('he-IL-Wavenet-D') === 'wavenet' && v.tierOf('he-IL-Chirp3-HD-Puck') === 'chirp' && v.tierOf('he-IL-Standard-D') === 'standard' && v.tierOf('he-IL-Studio-B') === 'blocked');
+  check('מונה קול: קול יקר נחסם', v.chargeTts('he-IL-Studio-B', 10) === false);
+  const before = v.ttsUsage().wavenet;
+  check('מונה קול: קול רגיל נספר', v.chargeTts('he-IL-Wavenet-D', 100) === true && v.ttsUsage().wavenet === before + 100);
+  check('מונה קול: חריגה מהמכסה נעצרת', v.chargeTts('he-IL-Wavenet-D', 5_000_000) === false);
+}
+
 server.close();
 console.log(failures ? `\n${failures} בדיקות נכשלו` : '\nכל הבדיקות עברו');
 process.exit(failures ? 1 : 0);

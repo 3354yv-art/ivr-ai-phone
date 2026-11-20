@@ -1,6 +1,8 @@
 // דיבור בקול של גוגל קלאוד (ברור יותר מהקול הרגיל של ימות).
 // הטקסט הופך לקובץ שמע, עולה לתיקייה במערכת של ימות, ומושמע משם. קבצים נשמרים במטמון לפי התוכן.
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { cfg } from './config.js';
 
 // קולות גבריים בעברית
@@ -16,10 +18,44 @@ export const DEFAULT_VOICE = 'he-IL-Wavenet-D';
 export const RATES = { slow: 0.85, normal: 1.0, fast: 1.2 };
 export const googleVoiceOn = () => !!cfg.googleCloudKey && !cfg.mock;
 
+// ---------- מונה שימוש חודשי: מגן מפני חיוב. מעבר למכסה -> חוזרים לקול הרגיל של ימות ----------
+// המכסה החינמית של גוגל: WaveNet ו-Standard 4 מיליון תווים בחודש, Chirp3 HD מיליון. כאן נעצרים הרבה לפניה.
+// קול מסוג אחר (Studio, Neural2 וכו') חסום לגמרי כי הוא יקר.
+const LIMITS = {
+  wavenet: Number(process.env.TTS_LIMIT_WAVENET || 3_000_000),
+  standard: Number(process.env.TTS_LIMIT_STANDARD || 3_000_000),
+  chirp: Number(process.env.TTS_LIMIT_CHIRP || 800_000),
+};
+export const tierOf = (v) => (/Chirp3-HD/i.test(v) ? 'chirp' : /Wavenet/i.test(v) ? 'wavenet' : /Standard/i.test(v) ? 'standard' : 'blocked');
+const usageFile = () => path.join(cfg.dataDir, 'tts-usage.json');
+const monthKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }).slice(0, 7);
+function readUsage() {
+  try {
+    const u = JSON.parse(fs.readFileSync(usageFile(), 'utf8'));
+    if (u.month === monthKey()) return u;
+  } catch { /* חדש */ }
+  return { month: monthKey(), wavenet: 0, standard: 0, chirp: 0 };
+}
+// מוסיף למונה ומחזיר false אם זה חורג מהמכסה (ואז לא שולחים לגוגל)
+export function chargeTts(voice, chars) {
+  const tier = tierOf(voice);
+  if (tier === 'blocked') return false;
+  const u = readUsage();
+  if (u[tier] + chars > LIMITS[tier]) return false;
+  u[tier] += chars;
+  try {
+    fs.mkdirSync(cfg.dataDir, { recursive: true });
+    fs.writeFileSync(usageFile(), JSON.stringify(u), { mode: 0o600 });
+  } catch { /* לא קריטי */ }
+  return true;
+}
+export const ttsUsage = () => readUsage();
+
 const cache = new Map(); // hash -> path בימות
 const pending = new Map();
 
 async function synth(text, voice, rate) {
+  if (!chargeTts(voice, text.length)) throw new Error('quota-guard: monthly TTS limit reached');
   const body = {
     input: { text },
     voice: { languageCode: 'he-IL', name: voice },
@@ -56,7 +92,7 @@ export async function voiceFile(text, voice, rate, token) {
         wav = await synth(text, v, rate);
       } catch (e) {
         // קול שלא קיים בעברית: חוזרים לקול ברירת המחדל
-        if (v !== DEFAULT_VOICE && /400|404|not exist|not available/i.test(e.message)) wav = await synth(text, DEFAULT_VOICE, rate);
+        if (v !== DEFAULT_VOICE && !/quota-guard/.test(e.message) && /400|404|not exist|not available/i.test(e.message)) wav = await synth(text, DEFAULT_VOICE, rate);
         else throw e;
       }
       await upload(token, name, wav);
