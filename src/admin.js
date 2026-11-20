@@ -251,7 +251,7 @@ const saveChat = () => {
   fs.writeFileSync(chatFile(), JSON.stringify(adminHist), { mode: 0o600 });
 };
 
-function lineContext() {
+export function lineContext() {
   const fs_ = folders();
   const today = new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' });
   const recent = readLog(400).filter((r) => r.q).slice(0, 40).map((r) => `${fmt(r.t)} ${showPhone(r.p)} (${r.k}): ${r.q.slice(0, 120)}`);

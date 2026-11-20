@@ -21,7 +21,8 @@ import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.
 import { getSetting, setSetting as setLineSetting, addRule, listRules, removeRule } from './rules.js';
 import { addMyRoutes } from './my.js';
 import { addHomeRoutes } from './home.js';
-import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor } from './admin.js';
+import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor, lineContext } from './admin.js';
+import { adminChat } from './ai.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1099,7 +1100,7 @@ async function manageMode(call) {
     const role = roleOf(call.phone);
     if (!role) return;
     const owner = role === 'owner';
-    const c = await ask(call, `תפריט ניהול${owner ? '' : ' לצוות הפיקוח'}. לחסימת מספר, 1. לשחרור חסימה, 2. לשמיעת הפעילות האחרונה, 3. לבדיקת מספר, 4. לקוד כניסה לאתר הניהול, 5.${owner ? ' להוראות ל-AI, 6. לצוות הפיקוח, 7. למכסת שאלות יומית, 8.' : ''} לחזרה, 0`, owner ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `תפריט ניהול${owner ? '' : ' לצוות הפיקוח'}. לחסימת מספר, 1. לשחרור חסימה, 2. לשמיעת הפעילות האחרונה, 3. לבדיקת מספר, 4. לקוד כניסה לאתר הניהול, 5.${owner ? ' להוראות ל-AI, 6. לצוות הפיקוח, 7. למכסת שאלות יומית, 8. לשיחה עם עוזר הניהול, 9.' : ''} לחזרה, 0`, owner ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] : [0, 1, 2, 3, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       const p = await typePhone(call, 'הקישו את המספר לחסימה, ובסיום סולמית');
@@ -1170,7 +1171,41 @@ async function manageMode(call) {
         setLineSetting('dailyLimit', Number(t));
         await speak(call, Number(t) ? `נשמר: ${t} שאלות ליום` : 'נשמר: ללא הגבלה');
       }
+    } else if (owner && c === '9') {
+      await ownerChat(call);
     }
+  }
+}
+
+// שיחה קולית של מנהל הקו בלבד עם עוזר הניהול: מוסיף ומסיר הוראות ל-AI ועונה על שאלות על הקו
+async function ownerChat(call) {
+  const hist = [];
+  let first = true;
+  while (true) {
+    if (roleOf(call.phone) !== 'owner') return;
+    const q = await listen(call, first ? 'שיחה עם עוזר הניהול. אמרו מה תרצו, ולסיום אמרו סיום' : 'מה עוד', 30, 'ניהול: שיחה');
+    first = false;
+    if (!q || /^\s*(סיום|די|תפסיק|חזרה|ביי)\s*[.!]*\s*$/.test(q)) {
+      await speak(call, 'חוזרים לתפריט הניהול');
+      return;
+    }
+    let r;
+    try {
+      r = await waitFor(call, adminChat(hist, q, lineContext()));
+    } catch (e) {
+      if (isControl(e)) throw e;
+      r = { reply: 'לא הצלחתי לענות כרגע, נסו שוב', add: [], remove: [] };
+    }
+    const notes = [];
+    for (const t of r.add) if (addRule(t)) notes.push(`נוספה הוראה: ${t}`);
+    for (const id of r.remove) {
+      const old = listRules().find((x) => x.id === id);
+      if (old && removeRule(id)) notes.push(`הוסרה הוראה: ${old.text}`);
+    }
+    hist.push({ role: 'admin', text: q }, { role: 'ai', text: r.reply });
+    if (hist.length > 16) hist.splice(0, 2);
+    logAnswer(call.phone, 'ניהול: שיחה', notes.join('; ') || r.reply.slice(0, 80));
+    await speak(call, `${r.reply}${notes.length ? `. ${notes.join('. ')}` : ''}`);
   }
 }
 
