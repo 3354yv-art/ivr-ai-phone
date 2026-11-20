@@ -16,6 +16,7 @@ import * as users from './users.js';
 import { sendLoginEmail } from './notify.js';
 import { addPoolRoutes, allKeys, isDonor } from './pool.js';
 import { withCaller } from './ctx.js';
+import * as gscript from './gscript.js';
 import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.js';
 import { getSetting, setSetting as setLineSetting, addRule, listRules, removeRule } from './rules.js';
 import { addMyRoutes } from './my.js';
@@ -254,6 +255,40 @@ async function chatMode(call, opts = {}) {
           answer = 'רשמתי, אזכור את זה';
         } else answer = 'לא יכולתי לשמור את זה';
         break;
+      case 'calendar':
+      case 'add_event':
+      case 'drive': {
+        const g = users.getGScript(call.phone);
+        if (!g) {
+          answer = 'בשביל זה צריך לחבר את חשבון הגוגל שלך. עושים את זה באיזור האישי באתר, בכרטיס חיבור חשבון גוגל';
+          break;
+        }
+        try {
+          if (r.action === 'calendar') {
+            const evs = await waitFor(call, gscript.call(g.url, g.secret, 'events', { date: r.date }));
+            const t = (x) => new Date(x).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
+            answer = evs.length ? `ביומן יש ${evs.length} אירועים. ${evs.map((e) => `${e.allDay ? 'כל היום' : `בשעה ${t(e.start)}`}, ${e.title}`).join('. ')}` : 'אין אירועים ביומן ביום הזה';
+          } else if (r.action === 'add_event') {
+            const ok = await ask(call, `לקבוע ביומן: ${r.title}, ב-${new Date(r.start).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}? לאישור הקישו 1, לביטול 2`, [1, 2], { sec_wait: 8, allow_empty: true, empty_val: '2' });
+            if (ok === '1') {
+              await waitFor(call, gscript.call(g.url, g.secret, 'addEvent', { title: r.title, start: r.start, end: r.end }));
+              answer = 'נקבע ביומן';
+            } else answer = 'בוטל';
+          } else {
+            const doc = await waitFor(call, gscript.call(g.url, g.secret, 'readDoc', { q: r.query }));
+            if (doc) {
+              answer = `המסמך ${doc.name}. ${await waitFor(call, ai.summarize(doc.text))}`;
+            } else {
+              const fs2 = await waitFor(call, gscript.call(g.url, g.secret, 'drive', { q: r.query }));
+              answer = fs2.length ? `מצאתי בדרייב: ${fs2.map((f) => f.name).join(', ')}` : 'לא מצאתי קבצים כאלה בדרייב';
+            }
+          }
+        } catch (e) {
+          if (isControl(e)) throw e;
+          answer = `לא הצלחתי לגשת לחשבון גוגל: ${String(e.message).slice(0, 80)}`;
+        }
+        break;
+      }
       case 'settings':
         await settingsMode(call);
         answer = 'חזרנו לשיחה. מה עוד?';
@@ -760,6 +795,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ספק המייל של המתקשר: ג'ימייל שחובר דרך הקישור, או תיבת השרת אם זה המייל של בעל המערכת
 function providerFor(call) {
+  const g = users.getGScript(call.phone);
+  if (g) return gscript.mailProvider(g.url, g.secret);
   const u = users.getUser(call.phone);
   if (u?.google?.refresh) return gmail.provider(u.google.refresh);
   const app = users.getAppAccount(call.phone);

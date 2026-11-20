@@ -54,6 +54,38 @@ export function getAppAccount(phone) {
   }
 }
 
+// חיבור לחשבון גוגל דרך סקריפט בחשבון של המשתמש: כתובת הסקריפט והמפתח הסודי (מוצפנים)
+export function gsSecret(phone, make) {
+  const k = normPhone(phone);
+  if (!k) return '';
+  const cur = db[k]?.gs?.secret ? dec(db[k].gs.secret) : '';
+  if (cur || !make) return cur;
+  const s = make();
+  db[k] = { ...(db[k] || {}), gs: { ...(db[k]?.gs || {}), secret: enc(s) } };
+  save();
+  return s;
+}
+export function setGScript(phone, url, email) {
+  const k = normPhone(phone);
+  if (!k || !db[k]?.gs?.secret) return false;
+  db[k].gs = { ...db[k].gs, url: enc(url), email: String(email || ''), t: Date.now() };
+  save();
+  return true;
+}
+export function getGScript(phone) {
+  const g = getUser(phone)?.gs;
+  if (!g?.url || !g?.secret) return null;
+  try {
+    return { url: dec(g.url), secret: dec(g.secret), email: g.email || '' };
+  } catch {
+    return null;
+  }
+}
+export function removeGScript(phone) {
+  const k = normPhone(phone);
+  if (db[k]?.gs) { delete db[k].gs; save(); }
+}
+
 // חשבונות באתרים (כמו פורום מתמחים טופ). הסיסמה נשמרת מוצפנת
 export function setSiteAccount(phone, host, username, password) {
   const k = normPhone(phone);

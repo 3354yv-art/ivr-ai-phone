@@ -250,6 +250,21 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('פורום: חיבור החשבון דרך הטלפון', said(FC.transcript, 'החשבון חובר בהצלחה') && us.getSiteAccount('0501234567', 'mitmachim.top')?.username === 'yodea@example.com');
 }
 
+// ---- חיבור גוגל דרך סקריפט ----
+{
+  const us = await import('../src/users.js');
+  const gs = await import('../src/gscript.js');
+  const secret = us.gsSecret('0501234567', gs.newSecret);
+  globalThis.__gscript = (action, args) => ({ ping: 'me@gmail.com', unread: [{ id: 'm1', from: 'רבקה <r@x.com>', subject: 'שלום', text: 'מה שלומך' }], events: [{ title: 'שיעור', start: '2026-11-20T18:00:00+02:00', end: '2026-11-20T19:00:00+02:00', allDay: false }] }[action]);
+  check('סקריפט גוגל: קוד עם מפתח אישי', gs.scriptCode(secret).includes(secret) && secret.length > 15);
+  us.setGScript('0501234567', 'https://script.google.com/macros/s/abc/exec', 'me@gmail.com');
+  const prov = gs.mailProvider('u', secret);
+  const un = await prov.unread(5);
+  check('סקריפט גוגל: מייל דרך הסקריפט', un[0].from === 'רבקה' && un[0].fromAddr === 'r@x.com');
+  us.removeGScript('0501234567');
+  check('סקריפט גוגל: ניתוק', !us.getGScript('0501234567'));
+}
+
 // ---- אבטחה ----
 const t = (u) => fetch(u).then((r) => r.text());
 check('מפתח שגוי נחסם', /hangup/.test(await t(`${root}/ivr?key=wrong&ApiCallId=b1&ApiPhone=0501234567&ApiDID=1&ApiExtension=1`)));

@@ -10,6 +10,7 @@ import { Forum, FORUMS, dropForum } from './nodebb.js';
 import { isDonor } from './pool.js';
 import { historyFor } from './admin.js';
 import { VOICES, googleVoiceOn } from './voice.js';
+import * as gs from './gscript.js';
 
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const show = (k) => (k && k[0] !== '0' ? `0${k}` : k);
@@ -89,6 +90,23 @@ export function addMyRoutes(app) {
     const hist = historyFor(phone, 60).map((r) => `<div class="msg ${r.a ? 'bot' : 'me'}"><div class="time">${fmt(r.t)}</div>${esc(r.a || r.q)}</div>`).join('') || '<p>עדיין אין שיחות.</p>';
     res.send(shell('האיזור האישי', `<div class="card"><h1>שלום, <span dir="ltr">${esc(show(phone))}</span></h1>${isDonor(phone) ? '<p class="ok">אתם מתומכי הקו. תודה!</p>' : ''}${flash}
 <form method="post" action="/my/logout"><button class="gray">יציאה</button></form></div>
+${(() => {
+      const g = users.getGScript(phone);
+      if (g) return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p><form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
+      const secret = users.gsSecret(phone, gs.newSecret);
+      return `<div class="card"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
+<p>החיבור נעשה עם סקריפט קטן שרץ בחשבון גוגל שלכם בלבד, כך שלא צריך סיסמת אפליקציה ולא אימות דו-שלבי. פעם אחת, כ-3 דקות:</p>
+<ol><li>היכנסו ל-<a href="https://script.google.com/home/projects/create" target="_blank" rel="noopener">script.google.com</a> (נפתח פרויקט חדש).</li>
+<li>מחקו את כל מה שכתוב שם, והדביקו את הקוד מהתיבה למטה (יש כפתור העתקה).</li>
+<li>למעלה לחצו <b>Deploy</b> (פריסה), ואז <b>New deployment</b>. בגלגל השיניים בחרו <b>Web app</b>.</li>
+<li>ב-Execute as בחרו <b>Me</b>, וב-Who has access בחרו <b>Anyone</b>. לחצו Deploy.</li>
+<li>גוגל תבקש אישור: Authorize access, בחרו את החשבון. אם מופיע "Google hasn't verified this app", לחצו Advanced ואז Go to (unsafe). זה הסקריפט שלכם, וזה בטוח.</li>
+<li>העתיקו את ה-Web app URL שמופיע, והדביקו אותו כאן למטה.</li></ol>
+<textarea id="gscode" readonly dir="ltr" style="width:100%;height:120px;font-family:monospace;font-size:12px">${esc(gs.scriptCode(secret))}</textarea>
+<button type="button" onclick="var t=document.getElementById('gscode');t.select();navigator.clipboard&&navigator.clipboard.writeText(t.value);this.textContent='הועתק'">העתק קוד</button>
+<form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" required style="width:100%"><button>חבר</button></form>
+<p class="note">הקוד מכיל מפתח סודי אישי, והסקריפט עונה רק לבקשות עם המפתח הזה. אפשר לנתק בכל רגע, ולמחוק את הסקריפט ב-script.google.com.</p></div>`;
+    })()}
 <div class="card"><h2>המייל שלי</h2>${mailCard}<p class="note">הסיסמה נבדקת מול ג׳ימייל ונשמרת מוצפנת בשרת. תוכן המיילים לא נשמר.</p></div>
 <div class="card"><h2>חשבונות באתרים</h2>${forums}<p class="note">הסיסמה נבדקת מול האתר ונשמרת מוצפנת בשרת.</p></div>
 <div class="card"><h2>מה העוזר זוכר עליי</h2><p>העוזר מתאים את התשובות לפי מה שכתוב כאן. אפשר להוסיף, למשל "קוראים לי משה" או "תענה לי תמיד בקצרה".</p><ul>${prefs || '<li>עדיין כלום</li>'}</ul>
@@ -150,6 +168,25 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     if (!(await verifyAccount(email, pass))) return back(res, 'ג׳ימייל לא קיבל את הפרטים. בדקו את הכתובת והסיסמה');
     users.setAppPassword(p, email, pass);
     back(res, 'המייל חובר. בקו מקישים 3 כדי לשמוע הודעות');
+  });
+  app.post('/my/gscript', async (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    const url = String(req.body?.url || '').trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) return back(res, 'הכתובת צריכה להיות כתובת Web app של הסקריפט, שמסתיימת ב-exec');
+    try {
+      const email = await gs.call(url, users.gsSecret(p), 'ping');
+      users.setGScript(p, url, email);
+      back(res, 'חשבון גוגל חובר בהצלחה');
+    } catch (e) {
+      back(res, `החיבור נכשל: ${String(e.message).slice(0, 140)}`);
+    }
+  });
+  app.post('/my/gscript/off', (req, res) => {
+    const p = need(req, res);
+    if (!p) return;
+    users.removeGScript(p);
+    back(res, 'חשבון גוגל נותק');
   });
   app.post('/my/mail/off', (req, res) => {
     const p = need(req, res);
