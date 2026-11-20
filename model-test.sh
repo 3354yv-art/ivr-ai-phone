@@ -1,7 +1,7 @@
 #!/bin/bash
 # משווה מודלים של Groq: זמן תשובה ונכונות בשאלות ידע בעברית. לא מדפיס מפתחות.
 cd ~/ivr-ai; set -a; . ./.env 2>/dev/null; set +a
-K=$(echo "$GROQ_API_KEYS,$GROQ_API_KEY" | tr ',' '\n' | grep gsk_ | head -1)
+K=$(echo "$GROQ_API_KEY" | tr ', ' '\n\n' | grep gsk_ | head -1)
 [ -z "$K" ] && K=$(python3 -c "import json;print(json.load(open('data/pool.json'))[0]['key'])" 2>/dev/null)
 for M in openai/gpt-oss-120b moonshotai/kimi-k2-instruct-0905 llama-3.3-70b-versatile qwen/qwen3-32b meta-llama/llama-4-maverick-17b-128e-instruct; do
   for Q in "מי זה אברהם פריד?" "מה זה החזון איש?"; do
