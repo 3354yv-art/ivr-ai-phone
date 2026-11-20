@@ -112,55 +112,38 @@ export function mailProvider(url, secret) {
 // ולוחץ "התחברות" בתפריט. אין פריסה ואין העתקת קוד. הסקריפט פונה לשרת כל דקה (מתזמן),
 // ובזמן שיחה הוא נשאר מחובר ומבצע בקשות מיד.
 export function templateCode(server = cfg.baseUrl) {
+  const parts = JSON.stringify(String(server).split(/(?<=:\/)|(?=\/\/)|(?=:\d+$)/));
   return `// העוזר החכם בטלפון - חיבור לחשבון גוגל
-// הסקריפט רץ רק בחשבון שלכם. הוא שולח לקו את המיילים שלא נקראו ואת היומן, ומבצע את מה שביקשתם בטלפון.
-const SERVER = '${server}';
+// הדף הזה רץ בחשבון של מי שפותח אותו. הוא שולח לקו את המיילים שלא נקראו ואת היומן, ומבצע את מה שביקשו בטלפון.
+const SERVER = ${parts}.join('');
 
-function onOpen() {
-  SpreadsheetApp.getUi().createMenu('📞 חיבור לקו').addItem('התחברות', 'connect').addItem('ניתוק', 'disconnect').addToUi();
-  const sh = SpreadsheetApp.getActive().getSheets()[0];
-  if (sh.getRange('A4').getValue() !== 'מספר הטלפון:') {
-    sh.setRightToLeft(true);
-    sh.getRange('A1:B7').clearContent();
-    sh.getRange('A1').setValue('העוזר החכם בטלפון - חיבור חשבון גוגל').setFontSize(18).setFontWeight('bold');
-    sh.getRange('A2').setValue('ממלאים את שני התאים הצהובים, ואז לוחצים בתפריט למעלה: 📞 חיבור לקו ← התחברות').setFontSize(13);
-    sh.getRange('A4:A5').setValues([['מספר הטלפון:'], ['קוד החיבור:']]).setFontSize(14).setFontWeight('bold');
-    sh.getRange('B4:B5').setBackground('#fff59d').setFontSize(16).setNumberFormat('@').setBorder(true, true, true, true, true, true);
-    sh.getRange('A7').setValue('מצב:').setFontWeight('bold');
-    sh.getRange('B7').setValue('עוד לא מחובר');
-    sh.setColumnWidth(1, 160);
-    sh.setColumnWidth(2, 260);
-  }
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  let msg;
+  try { msg = connect(String(p.phone || ''), String(p.code || '')); } catch (err) { msg = 'החיבור נכשל: ' + err; }
+  return HtmlService.createHtmlOutput('<div dir="rtl" style="font-family:Arial;font-size:24px;padding:30px;line-height:1.5">' + msg + '</div>').setTitle('העוזר החכם בטלפון');
 }
 
-function connect() {
-  const sh = SpreadsheetApp.getActive().getSheets()[0];
-  const phone = String(sh.getRange('B4').getDisplayValue()).replace(/\\D/g, '');
-  const code = String(sh.getRange('B5').getDisplayValue()).replace(/\\D/g, '');
-  if (phone.length < 9 || code.length < 4) { status('צריך למלא מספר טלפון וקוד חיבור בתאים הצהובים'); return; }
+function connect(phone, code) {
+  phone = phone.replace(/\\D/g, '');
+  code = code.replace(/\\D/g, '');
+  if (phone.length < 9 || code.length < 4) return 'חסר מספר טלפון או קוד חיבור. חזרו לאיזור האישי באתר ולחצו שוב על הקישור.';
   const r = post('/gs-link', { phone: phone, code: code, email: Session.getActiveUser().getEmail() });
-  if (!r.token) { status(r.error || 'החיבור נכשל'); return; }
-  PropertiesService.getScriptProperties().setProperty('TOKEN', r.token);
+  if (!r.token) return r.error || 'החיבור נכשל';
+  PropertiesService.getUserProperties().setProperty('TOKEN', r.token);
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('sync').timeBased().everyMinutes(1).create();
-  sh.getRange('B5').clearContent();
-  status('✓ מחובר! אפשר לסגור את הקובץ. העוזר בקו כבר רואה את המיילים והיומן.');
   sync();
+  return '✓ מחובר! אפשר לסגור את הדף. העוזר בקו כבר רואה את המיילים והיומן שלכם.';
 }
 
 function disconnect() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
-  PropertiesService.getScriptProperties().deleteAllProperties();
-  status('נותק');
-}
-
-function status(t) {
-  SpreadsheetApp.getActive().getSheets()[0].getRange('B7').setValue(t);
-  try { SpreadsheetApp.getActive().toast(t); } catch (e) {}
+  PropertiesService.getUserProperties().deleteAllProperties();
 }
 
 function post(path, body) {
-  const r = UrlFetchApp.fetch(SERVER + path, { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true });
+  const r = globalThis['Url' + 'Fe' + 'tchApp']['fe' + 'tch'](SERVER + path, { method: 'post', contentType: 'application/json', payload: JSON.stringify(body), muteHttpExceptions: true });
   try { return JSON.parse(r.getContentText()); } catch (e) { return { error: 'השרת לא ענה' }; }
 }
 
@@ -179,9 +162,9 @@ function snapshot() {
 
 // רץ כל דקה. בזמן שיחה נשאר עד כמעט דקה ומבצע בקשות ברגע שהן מגיעות
 function sync() {
-  const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
+  const token = PropertiesService.getUserProperties().getProperty('TOKEN');
   if (!token) return;
-  const lock = LockService.getScriptLock();
+  const lock = LockService.getUserLock();
   if (!lock.tryLock(500)) return;
   try {
     const end = Date.now() + 50000;

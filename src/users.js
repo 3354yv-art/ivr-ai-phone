@@ -90,9 +90,18 @@ export function getGScript(phone) {
   }
 }
 // קוד חיבור קצר (6 ספרות) לחיבור דרך עותק של הקובץ המוכן
+// קודי חיבור קבועים שהמנהל קבע: GS_FIXED_CODES=טלפון:קוד,טלפון:קוד
+const fixedCode = (k) => {
+  for (const part of String(process.env.GS_FIXED_CODES || '').split(',')) {
+    const [p, c] = part.split(':').map((x) => (x || '').trim());
+    if (p && c && normPhone(p) === k) return c.replace(/\D/g, '');
+  }
+  return '';
+};
 export function gsLinkCode(phone) {
   const k = normPhone(phone);
   if (!k) return '';
+  if (fixedCode(k)) return fixedCode(k);
   if (!db[k]?.gsCode) {
     db[k] = { ...(db[k] || {}), gsCode: String(crypto.randomInt(100000, 1000000)) };
     save();
@@ -104,12 +113,13 @@ export function linkGsPull(phone, code, token, email) {
   const k = normPhone(phone);
   const f = linkFails.get(k) || { n: 0, t: Date.now() };
   if (Date.now() - f.t > 3600000) (f.n = 0), (f.t = Date.now());
-  if (!k || f.n >= 6 || !db[k]?.gsCode || db[k].gsCode !== String(code)) {
+  const want = k ? fixedCode(k) || db[k]?.gsCode : '';
+  if (!k || f.n >= 6 || !want || want !== String(code)) {
     f.n++;
     linkFails.set(k, f);
     return false;
   }
-  db[k].gs = { secret: enc(token), url: enc(`pull:${k}`), email: String(email || ''), t: Date.now() };
+  db[k] = { ...(db[k] || {}), gs: { secret: enc(token), url: enc(`pull:${k}`), email: String(email || ''), t: Date.now() } };
   delete db[k].gsCode;
   save();
   return k;
