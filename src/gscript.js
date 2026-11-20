@@ -118,6 +118,19 @@ const SERVER = '${server}';
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('📞 חיבור לקו').addItem('התחברות', 'connect').addItem('ניתוק', 'disconnect').addToUi();
+  const sh = SpreadsheetApp.getActive().getSheets()[0];
+  if (sh.getRange('A4').getValue() !== 'מספר הטלפון:') {
+    sh.setRightToLeft(true);
+    sh.getRange('A1:B7').clearContent();
+    sh.getRange('A1').setValue('העוזר החכם בטלפון - חיבור חשבון גוגל').setFontSize(18).setFontWeight('bold');
+    sh.getRange('A2').setValue('ממלאים את שני התאים הצהובים, ואז לוחצים בתפריט למעלה: 📞 חיבור לקו ← התחברות').setFontSize(13);
+    sh.getRange('A4:A5').setValues([['מספר הטלפון:'], ['קוד החיבור:']]).setFontSize(14).setFontWeight('bold');
+    sh.getRange('B4:B5').setBackground('#fff59d').setFontSize(16).setNumberFormat('@').setBorder(true, true, true, true, true, true);
+    sh.getRange('A7').setValue('מצב:').setFontWeight('bold');
+    sh.getRange('B7').setValue('עוד לא מחובר');
+    sh.setColumnWidth(1, 160);
+    sh.setColumnWidth(2, 260);
+  }
 }
 
 function connect() {
