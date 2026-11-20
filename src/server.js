@@ -210,6 +210,25 @@ async function chatMode(call, opts = {}) {
   call.chatHintGiven = true;
   let silent = 0;
   let last = '';
+  // אומרים את התשובה, ואת המשפט האחרון שלה משמיעים כהודעה שלפני הצליל. כך הצליל נשמע מיד בסופה, בלי "כן?" מיותר
+  const sayThenListen = async (text) => {
+    const parts = chunk(text);
+    const lastPart = parts.pop() || '';
+    const sents = lastPart.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const tail = sents.pop() || '';
+    const head = [...parts, sents.join(' ')].filter(Boolean).join(' ');
+    if (head) {
+      const nl = call.noLog;
+      if (!nl && text) logAnswer(call.phone, 'הקו אמר', String(text).slice(0, 2000));
+      call.noLog = true;
+      try {
+        await speak(call, head);
+      } finally {
+        call.noLog = nl;
+      }
+    } else if (!call.noLog && text) logAnswer(call.phone, 'הקו אמר', String(text).slice(0, 2000));
+    prompt = tail || 'כן?';
+  };
   while (true) {
     const q = await listen(call, prompt, 30, 'שיחה עם AI');
     prompt = 'כן?';
@@ -220,7 +239,7 @@ async function chatMode(call, opts = {}) {
     }
     silent = 0;
     if (/^\s*(תחזור על זה|שוב|עוד פעם|לא שמעתי)\s*[.?!]*\s*$/.test(q) && last) {
-      await speak(call, last);
+      await sayThenListen(last);
       continue;
     }
     if (/^\s*(היסטוריה|ההיסטוריה|מה שאלתי|מה דיברנו|שיחות קודמות)[^.?!]{0,15}[.?!]?\s*$/.test(q)) {
@@ -236,7 +255,7 @@ async function chatMode(call, opts = {}) {
       if (sources[n]) {
         await speak(call, `נכנס ל${sources[n].title}`);
         await browse(call, sources[n].url);
-        await speak(call, 'חזרנו. מה עוד?');
+        await sayThenListen('חזרנו. מה עוד?');
         continue;
       }
     }
@@ -332,7 +351,7 @@ async function chatMode(call, opts = {}) {
     if (history.length > (isDonor(call.phone) ? 40 : 20)) history.splice(0, 2);
     users.saveLastChat(call.phone, history);
     last = answer;
-    await speak(call, answer);
+    await sayThenListen(answer);
   }
 }
 
