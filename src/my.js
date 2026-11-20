@@ -92,17 +92,25 @@ export function addMyRoutes(app) {
 ${roleOf(phone) ? `<p><a href="/${roleOf(phone) === 'owner' ? 'admin' : 'staff'}">חזרה לניהול</a></p>` : ''}<form method="post" action="/my/logout"><button class="gray">יציאה</button></form></div>
 ${(() => {
       const g = users.getGScript(phone);
-      if (g) return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p><form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
+      if (g) {
+        const pull = g.url.startsWith('pull:');
+        const seen = pull ? gs.lastSeen(users.normPhone(phone)) : 0;
+        return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p>${pull ? `<p class="note">${seen ? `הסנכרון האחרון עם גוגל: ${fmt(seen)}` : 'מחכה לסנכרון הראשון (עד דקה)'}</p>` : ''}<form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
+      }
+      const code = users.gsLinkCode(phone);
       const secret = users.gsSecret(phone, gs.newSecret);
+      const manual = `<p><button type="button" onclick="var t=document.getElementById('gscode');t.select();navigator.clipboard&&navigator.clipboard.writeText(t.value);this.textContent='✓ הקוד הועתק';window.open('https://script.google.com/home/projects/create','_blank')">העתק קוד ופתח את גוגל</button></p>
+<p>בדף שנפתח: Ctrl+A ואז Ctrl+V בתוך הקוד. אחר כך <b>Deploy</b> ← <b>New deployment</b> ← <b>Web app</b>, ב-Who has access בוחרים <b>Anyone</b>, <b>Deploy</b>, מאשרים, ולוחצים על הקישור שמופיע.</p>
+<textarea id="gscode" readonly dir="ltr" style="width:100%;height:50px;font-family:monospace;font-size:11px;opacity:.6">${esc(gs.scriptCode(secret))}</textarea>
+<form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%"><button>חבר לפי כתובת</button></form>`;
+      if (!cfg.gsTemplate) return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>${manual}</div><script>setInterval(function(){fetch('/my/gs-status').then(function(r){return r.text()}).then(function(t){if(t==='1')location.reload()})},4000)</script>`;
       return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
-<p>4 צעדים קצרים, פעם אחת:</p>
-<p><button type="button" style="font-size:17px" onclick="var t=document.getElementById('gscode');t.select();navigator.clipboard&&navigator.clipboard.writeText(t.value);this.textContent='✓ הקוד הועתק';window.open('https://script.google.com/home/projects/create','_blank')">1. העתק קוד ופתח את גוגל</button></p>
-<p><b>2.</b> בדף שנפתח: לוחצים בתוך הקוד, <b>Ctrl+A</b> ואז <b>Ctrl+V</b> (מחליף את מה שכתוב בקוד שהעתקתם).</p>
-<p><b>3.</b> לוחצים למעלה מימין <b>Deploy</b> ← <b>New deployment</b> ← בגלגל השיניים <b>Web app</b>. ב-Who has access בוחרים <b>Anyone</b>, ולוחצים <b>Deploy</b>. גוגל תבקש אישור: <b>Authorize access</b>, בוחרים את החשבון. אם כתוב "Google hasn't verified this app": <b>Advanced</b> ← <b>Go to ... (unsafe)</b> ← <b>Allow</b>. זה הסקריפט שלכם.</p>
-<p><b>4.</b> בסוף מופיע קישור תחת Web app. לוחצים עליו, וזהו. החיבור נעשה לבד, והדף הזה יתעדכן.</p>
-<textarea id="gscode" readonly dir="ltr" style="width:100%;height:60px;font-family:monospace;font-size:11px;opacity:.6">${esc(gs.scriptCode(secret))}</textarea>
-<details><summary class="note">הקישור לא עבד? אפשר להדביק אותו כאן</summary><form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%"><button>חבר</button></form></details>
-<p class="note">הקוד מכיל מפתח סודי אישי, והסקריפט עונה רק לקו. אפשר לנתק בכל רגע.</p></div>
+<p style="font-size:19px"><b>1.</b> <a href="https://docs.google.com/spreadsheets/d/${cfg.gsTemplate}/copy" target="_blank"><b>לחצו כאן</b></a>, ואז על הכפתור <b>Make a copy</b> (יצירת עותק).</p>
+<p style="font-size:19px"><b>2.</b> בקובץ שנפתח, ממלאים בתאים הצהובים את מספר הטלפון <b dir="ltr">${esc(show(phone))}</b> ואת קוד החיבור: <b dir="ltr" style="font-size:24px;letter-spacing:3px">${esc(code)}</b></p>
+<p style="font-size:19px"><b>3.</b> בתפריט למעלה לוחצים <b>📞 חיבור לקו</b> ← <b>התחברות</b>, ומאשרים לגוגל.</p>
+<p class="note">באישור, גוגל מזהירה שהאפליקציה לא מאומתת. זה רגיל: לוחצים <b>Advanced</b> (מתקדם) ← <b>Go to</b> (מעבר אל) ← <b>Allow</b> (אישור). הקוד רץ רק בחשבון שלכם. אם אחרי האישור לא קרה כלום, לוחצים שוב על התחברות.</p>
+<p class="note">הדף הזה יתעדכן לבד כשהחיבור יצליח.</p>
+<details><summary class="note">דרך אחרת (למתקדמים)</summary>${manual}</details></div>
 <script>setInterval(function(){fetch('/my/gs-status').then(function(r){return r.text()}).then(function(t){if(t==='1')location.reload()})},4000)</script>`;
     })()}
 <div class="card"><h2>המייל שלי</h2>${mailCard}<p class="note">הסיסמה נבדקת מול ג׳ימייל ונשמרת מוצפנת בשרת. תוכן המיילים לא נשמר.</p></div>

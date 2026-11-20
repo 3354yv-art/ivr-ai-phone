@@ -108,7 +108,7 @@ check('שיחה ב: המייל עובד ללא הרשמה נוספת', B.used ==
 check('שיחה ב: תשובה נשלחה דרך הג׳ימייל', (globalThis.__mockSent || []).some((x) => x.via === 'gmail' && x.body === 'תודה רבה'));
 
 // ---- חיבור בהקשה: כתובת + סיסמת אפליקציה ----
-const C = await drive('callC', ['4', '2', '1', '1', 'dina@gmail.com', 'abcdefghijklmnop', '0', '0']);
+const C = await drive('callC', ['4', '2', '3', '1', 'dina@gmail.com', 'abcdefghijklmnop', '0', '0']);
 const acc = (await import('../src/users.js')).getAppAccount('0501234567');
 check('חיבור בהקשה: כתובת וסיסמת אפליקציה נשמרו (מוצפן)', C.used === C.total && acc?.user === 'dina@gmail.com' && acc?.pass === 'abcdefghijklmnop' && !fs.readFileSync(path.join(process.env.DATA_DIR || '.', 'users.json'), 'utf8').includes('abcdefghijklmnop'));
 
@@ -311,6 +311,34 @@ check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file
   await fetch(`${root}/admin/unblock`, form({ p: '0501234567' }));
   const Ub = await drive('callUb', ['0']);
   check('חסימה: אחרי שחרור אפשר להתקשר', !said(Ub.transcript, 'נחסם'));
+}
+
+{
+  // חיבור פשוט: עותק קובץ + טלפון + קוד, והסקריפט מסנכרן מול השרת
+  const users = await import('../src/users.js');
+  const gsm = await import('../src/gscript.js');
+  const saved = globalThis.__gscript;
+  globalThis.__gscript = null;
+  const post = (u, b) => fetch(`${root}${u}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+  const code = users.gsLinkCode('0527777777');
+  const bad = await post('/gs-link', { phone: '0527777777', code: '000000', email: 'a@gmail.com' });
+  const ok = await post('/gs-link', { phone: '0527777777', code, email: 'a@gmail.com' });
+  check('גוגל פשוט: קוד שגוי נדחה, קוד נכון מחבר', !bad.token && !!ok.token && !!users.getGScript('0527777777'));
+  await post('/gs-poll', { token: ok.token, snap: { unread: [{ id: 'x1', from: 'דוד <d@x.com>', subject: 'שלום', text: 'טקסט' }], events: [], email: 'a@gmail.com' } });
+  const g = users.getGScript('0527777777');
+  const un = await gsm.mailProvider(g.url, g.secret).unread(5);
+  check('גוגל פשוט: המיילים מגיעים מהסנכרון', un.length === 1 && un[0].from === 'דוד');
+  gsm.touch('527777777');
+  const pr = gsm.call(g.url, g.secret, 'drive', { q: 'חשבון' });
+  const p1 = await post('/gs-poll', { token: ok.token, wait: true });
+  const job = p1.jobs[0];
+  await post('/gs-poll', { token: ok.token, results: [{ id: job.id, ok: true, data: [{ name: 'חשבון חשמל' }] }] });
+  const res = await pr;
+  check('גוגל פשוט: בקשה בזמן שיחה מבוצעת ומחזירה תשובה', job.action === 'drive' && res[0].name === 'חשבון חשמל');
+  const un2 = await post('/gs-poll', { token: 'wrong' });
+  check('גוגל פשוט: מפתח לא מוכר מקבל ניתוק', un2.error === 'unlinked');
+  check('גוגל פשוט: קוד הסקריפט תקין', (() => { try { new Function(gsm.templateCode('http://x')); return true; } catch { return false; } })());
+  globalThis.__gscript = saved;
 }
 
 server.close();

@@ -962,7 +962,7 @@ async function replyFlow(call, prov, m) {
 async function personalMode(call) {
   while (true) {
     const u = users.getUser(call.phone);
-    const state = u?.google?.refresh || u?.app ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
+    const state = u?.google?.refresh || u?.app || u?.gs?.url ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
     const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור ג׳ימייל או מתמחים טופ הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
@@ -970,8 +970,14 @@ async function personalMode(call) {
       const mine = recentFor(call.phone, 3);
       await speak(call, mine.length ? mine.map((r, i) => `${i + 1}, ${r.q}`).join('. ') : 'עדיין אין חיפושים');
     } else if (c === '2') {
-      const w = await ask(call, 'לחיבור ג׳ימייל, הקישו 1. לחיבור החשבון במתמחים טופ, 2. לחזרה, 0', [0, 1, 2], { sec_wait: 7, allow_empty: true, empty_val: '0' });
-      if (w === '1') await registerFlow(call);
+      const w = await ask(call, 'לחיבור חשבון גוגל, מייל יומן ודרייב, הקישו 1. לחיבור ג׳ימייל בסיסמת אפליקציה, 3. לחיבור החשבון במתמחים טופ, 2. לחזרה, 0', [0, 1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+      if (w === '1') {
+        if (!call.phone) await speak(call, 'אי אפשר לחבר חשבון משיחה ממספר חסוי');
+        else {
+          const code = users.gsLinkCode(call.phone).split('').join(', ');
+          await speak(call, `קוד החיבור שלך הוא: ${code}. אחזור שוב: ${code}. במחשב, נכנסים לאיזור האישי באתר ${spokenSite('my')}, לוחצים על הקישור לקובץ של העוזר, ויוצרים עותק. ממלאים את מספר הטלפון ואת הקוד, ולוחצים בתפריט למעלה, חיבור לקו, התחברות`);
+        }
+      } else if (w === '3') await registerFlow(call);
       else if (w === '2') await forumConnect(call, 'mitmachim.top');
     } else if (c === '3') {
       if (!call.phone) {
@@ -1197,7 +1203,7 @@ function handler(call) {
 
 async function handlerInner(call) {
   if (!authorized(call)) {
-    console.warn('שיחה לא מורשית מ', call.phone);
+    console.warn('שיחה לא מורשית מ', call.phone, cfg.key && call.req.query.key !== cfg.key ? `(מפתח בכתובת לא תואם: ${call.req.query.key ? 'אחר' : 'חסר'})` : '(לא ברשימת המספרים המורשים)');
     return call.id_list_message([T('אין הרשאה'), { type: 'go_to_folder', data: 'hangup' }]);
   }
   const bi = blockInfo(call.phone);
@@ -1207,6 +1213,7 @@ async function handlerInner(call) {
     return call.id_list_message([T(`המספר שלך נחסם ${howLong}. ${bi.reason ? `הסיבה: ${bi.reason}.` : ''} להתראות`), { type: 'go_to_folder', data: 'hangup' }]);
   }
   console.log('שיחה נכנסת מ', call.phone || 'מספר חסוי');
+  if (users.getGScript(call.phone)) gscript.touch(users.normPhone(call.phone));
   logAnswer(call.phone, 'שיחה התחילה', '', true);
   // ברכה קצרה שאפשר לקטוע בהקשה. נכנסים לשיחה עם העוזר רק בהקשה על 1
   let first = true;
@@ -1256,6 +1263,7 @@ const SETUP_FIELDS = [
   ['YEMOT_TOKEN', 'טוקן ימות המשיח (מספר מערכת:סיסמה)'],
   ['BREVO_API_KEY', 'מפתח API של Brevo לשליחת מיילי החיבור (מומלץ)'],
   ['BREVO_SENDER', 'כתובת השולח שאושרה ב-Brevo (בדרך כלל המייל שאיתו נרשמת)'],
+  ['GS_TEMPLATE', 'הקישור לקובץ גוגל המוכן לחיבור חשבונות (נוצר פעם אחת)'],
   ['GOOGLE_CLOUD_KEY', 'מפתח API של גוגל קלאוד: קולות ברורים וזיהוי דיבור מדויק (אופציונלי)'],
   ['MAIL_USER', 'ג׳ימייל לשליחת מיילי החיבור (אופציונלי)'],
   ['MAIL_APP_PASSWORD', 'סיסמת אפליקציה של הג׳ימייל (אופציונלי)'],
@@ -1321,6 +1329,20 @@ function addWebRoutes(app) {
     }
     users.setGScript(phone, String(url), String(email || ''));
     res.send('ok');
+  });
+  // חיבור פשוט: הסקריפט שבעותק הקובץ מתחבר עם מספר טלפון וקוד חיבור
+  app.post('/gs-link', express.json({ limit: '10kb' }), (req, res) => {
+    const { phone, code, email } = req.body || {};
+    const token = gscript.newSecret();
+    const k = users.linkGsPull(String(phone || ''), String(code || '').replace(/\D/g, ''), token, String(email || '').slice(0, 120));
+    if (!k) return res.json({ error: 'מספר הטלפון או קוד החיבור לא נכונים. את הקוד מקבלים באיזור האישי באתר או בקו' });
+    res.json({ token });
+  });
+  app.post('/gs-poll', express.json({ limit: '2mb' }), async (req, res) => {
+    const token = String(req.body?.token || '');
+    const k = token ? users.phoneByGsSecret(token) : '';
+    if (!k) return res.json({ error: 'unlinked' });
+    res.json(await gscript.poll(k, req.body));
   });
   addAdminRoutes(app);
   addMyRoutes(app);

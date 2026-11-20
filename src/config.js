@@ -12,6 +12,7 @@ export const cfg = {
   groqModel: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
   groqSttModel: process.env.GROQ_STT_MODEL || 'whisper-large-v3',
   googleCloudKey: process.env.GOOGLE_CLOUD_KEY || '',
+  gsTemplate: (process.env.GS_TEMPLATE || '').match(/[\w-]{25,}/)?.[0] || '',
   cerebrasKey: process.env.CEREBRAS_API_KEY || '',
   cerebrasModel: process.env.CEREBRAS_MODEL || 'gpt-oss-120b',
   cfAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
