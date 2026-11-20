@@ -8,7 +8,7 @@ import * as users from './users.js';
 import { verifyAccount } from './mail.js';
 import { Forum, FORUMS, dropForum } from './nodebb.js';
 import { isDonor } from './pool.js';
-import { historyFor } from './admin.js';
+import { historyFor, roleOf } from './admin.js';
 import { VOICES, googleVoiceOn } from './voice.js';
 import * as gs from './gscript.js';
 
@@ -89,7 +89,7 @@ export function addMyRoutes(app) {
     const prefs = (u.prefs || []).map((p, i) => `<li>${esc(p)} <form method="post" action="/my/pref/del" style="display:inline"><input type="hidden" name="i" value="${i}"><button class="gray" style="padding:2px 10px;font-size:13px">מחק</button></form></li>`).join('');
     const hist = historyFor(phone, 60).map((r) => `<div class="msg ${r.a ? 'bot' : 'me'}"><div class="time">${fmt(r.t)}</div>${esc(r.a || r.q)}</div>`).join('') || '<p>עדיין אין שיחות.</p>';
     res.send(shell('האיזור האישי', `<div class="card"><h1>שלום, <span dir="ltr">${esc(show(phone))}</span></h1>${isDonor(phone) ? '<p class="ok">אתם מתומכי הקו. תודה!</p>' : ''}${flash}
-<form method="post" action="/my/logout"><button class="gray">יציאה</button></form></div>
+${roleOf(phone) ? `<p><a href="/${roleOf(phone) === 'owner' ? 'admin' : 'staff'}">חזרה לניהול</a></p>` : ''}<form method="post" action="/my/logout"><button class="gray">יציאה</button></form></div>
 ${(() => {
       const g = users.getGScript(phone);
       if (g) return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p><form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;

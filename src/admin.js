@@ -202,8 +202,8 @@ button,.btn{background:#1a73e8;color:#fff;border:0;border-radius:6px;padding:8px
 const fmt = (t) => new Date(t).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
 const fmtTime = (t) => new Date(t).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
-const navOwner = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/blocks">חסימות</a><a href="/admin/settings">הגדרות, צוות ומפתחות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
-const navStaff = '<div class="card nav"><b>אתר צוות הפיקוח</b> · <a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/blocks">חסימות</a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navOwner = '<div class="card nav"><a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/rules">הוראות ל-AI</a><a href="/admin/chat">שיחה עם ה-AI</a><a href="/admin/blocks">חסימות</a><a href="/admin/settings">הגדרות, צוות ומפתחות</a><a href="/admin/me"><b>האיזור האישי שלי</b></a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
+const navStaff = '<div class="card nav"><b>אתר צוות הפיקוח</b> · <a href="/admin">תיקים</a><a href="/admin/live">שיחות אחרונות</a><a href="/admin/blocks">חסימות</a><a href="/admin/me"><b>האיזור האישי שלי</b></a><form method="post" action="/admin/logout" style="display:inline;float:left"><button class="gray">יציאה</button></form></div>';
 const navFor = (role) => (role === 'staff' ? navStaff : navOwner);
 const usersDb = () => {
   try {
@@ -307,6 +307,16 @@ export function addAdminRoutes(app) {
     res.redirect('/');
     return false;
   };
+
+  // מעבר לאיזור האישי (חיבור גוגל, מייל, פורום, הגדרות) בלי כניסה נוספת
+  app.get('/admin/me', async (req, res) => {
+    if (!gate(req, res, 'staff')) return;
+    const phone = sessions.get(sidOf(req))?.phone || ownerPhone();
+    if (!phone) return res.send(shell('האיזור האישי', `${navFor(req.role)}<div class="card"><p>לא מוגדר מספר טלפון למנהל הקו, ולכן אין איזור אישי.</p></div>`));
+    const { openMySession } = await import('./my.js');
+    res.set('set-cookie', openMySession(phone));
+    res.redirect('/my');
+  });
 
   // ---- דף ראשי: רשימת תיקים, מספר אחד בשורה אחת ----
   app.get('/admin', (req, res) => {
