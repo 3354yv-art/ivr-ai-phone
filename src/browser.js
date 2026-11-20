@@ -64,7 +64,7 @@ async function snapshot(page) {
     const els = [];
     const sel = 'a[href], button, input:not([type=hidden]), textarea, select, [role=button], [role=link], [role=tab], [role=menuitem], [onclick]';
     for (const el of document.querySelectorAll(sel)) {
-      if (els.length >= 70 || !vis(el)) continue;
+      if (els.length >= 120 || !vis(el)) continue;
       const tag = el.tagName.toLowerCase();
       const type = (el.getAttribute('type') || '').toLowerCase();
       const isField = (tag === 'input' && !['submit', 'button', 'checkbox', 'radio', 'image'].includes(type)) || tag === 'textarea' || tag === 'select';

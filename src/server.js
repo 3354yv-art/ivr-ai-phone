@@ -203,6 +203,11 @@ async function chatMode(call) {
         await speak(call, 'חוזרים לתפריט');
         return;
       case 'search': {
+        if (/מתמחים|mitmachim/i.test(r.query || q)) {
+          await forumMode(call, 'mitmachim.top');
+          answer = 'חזרנו לשיחה. מה עוד?';
+          break;
+        }
         const res = await waitFor(call, ai.search(r.query || q, persona()));
         answer = res.answer;
         break;
@@ -277,6 +282,18 @@ async function hear(call, prompt, kind) {
   return c === '1' ? hear(call, prompt, kind) : null;
 }
 
+// אם המתקשר אמר "תלחץ על X" ו-X הוא בדיוק שם של כפתור או קישור בדף, לוחצים מיד בלי לשאול את ה-AI
+const nrm = (s) => String(s || '').replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+function directClick(page, cmd) {
+  const m = String(cmd).match(/^\s*(?:תלחץ|לחץ|תלחצי|תקיש|תיכנס|כנס|תפתח|פתח)\s+(?:על\s+|ל|את\s+)?(.{2,60})$/);
+  if (!m) return null;
+  const want = nrm(m[1]);
+  const els = (page.els || []).filter((e) => e.kind !== 'שדה');
+  const exact = els.filter((e) => nrm(e.text) === want);
+  const pick = exact.length === 1 ? exact[0] : (() => { const c = els.filter((e) => nrm(e.text).includes(want) && want.length >= 3); return c.length === 1 ? c[0] : null; })();
+  return pick ? { action: 'click', index: pick.i, title: pick.text } : null;
+}
+
 // דפדפן אמיתי: העוזר לוחץ על כפתורים וממלא שדות
 async function browseLive(call, startUrl) {
   const id = String(call.callId || call.phone || Math.random());
@@ -303,7 +320,7 @@ async function browseLive(call, startUrl) {
       const cmd = await hear(call, 'אני מקשיב', 'פקודה לסוכן');
       if (cmd === null) return;
       history.push({ role: 'user', text: cmd });
-      const act = await waitFor(call, ai.agent(page, cmd, history, persona));
+      const act = directClick(page, cmd) || (await waitFor(call, ai.agent(page, cmd, history, persona)));
       let note = '';
       try {
         if (act.action === 'click') {
@@ -685,6 +702,10 @@ async function searchMode(call) {
       return;
     }
     if (!(await quotaOk(call))) return;
+    if (/מתמחים|mitmachim/i.test(q)) {
+      await forumMode(call, 'mitmachim.top');
+      return;
+    }
     q = await waitFor(call, ai.fixQuery(q));
     const res = await waitFor(call, ai.search(q, users.personaOf(call.phone)));
     let more = true;
