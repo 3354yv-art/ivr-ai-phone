@@ -89,6 +89,19 @@ export const historyFor = (phone, n = 150) => {
   return readLog(20000).filter((r) => r.p === k && !r.e).slice(0, n).reverse();
 };
 
+// שאלות ותשובות מזווגות של מספר אחד, החדשות ראשונות
+export function qaFor(phone, n = 20) {
+  const out = [];
+  let cur = null;
+  for (const r of historyFor(phone, 600)) {
+    if (r.q) {
+      cur = { t: r.t, k: r.k, q: r.q, a: '' };
+      out.push(cur);
+    } else if (r.a && cur && !cur.a) cur.a = r.a;
+  }
+  return out.reverse().slice(0, n);
+}
+
 // מספר מלא לתצוגה: 551234567 -> 0551234567
 export const showPhone = (p) => (/^\d{9}$/.test(p) && p[0] !== '0' ? `0${p}` : String(p || ''));
 

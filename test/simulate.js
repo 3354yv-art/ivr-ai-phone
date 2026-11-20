@@ -354,6 +354,16 @@ check('קובץ המשתמשים נשמר בהרשאות 600', (fs.statSync(file
   if (r1) rl.removeRule(r1.id);
 }
 
+// היסטוריה: שאלות ותשובות מזווגות
+{
+  const ad = await import('../src/admin.js');
+  ad.logQuery('0526000111', 'שיחה עם AI', 'מה מזג האוויר');
+  ad.logAnswer('0526000111', 'שיחה עם AI', 'שמשי');
+  ad.logQuery('0526000111', 'שיחה עם AI', 'מה השעה');
+  const qa = ad.qaFor('0526000111', 5);
+  check('היסטוריה: זוגות שאלה ותשובה, חדש ראשון', qa.length === 2 && qa[1].q === 'מה מזג האוויר' && qa[1].a === 'שמשי' && qa[0].q === 'מה השעה' && qa[0].a === '');
+}
+
 server.close();
 console.log(failures ? `\n${failures} בדיקות נכשלו` : '\nכל הבדיקות עברו');
 process.exit(failures ? 1 : 0);

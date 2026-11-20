@@ -21,7 +21,7 @@ import { voiceFile, googleVoiceOn, DEFAULT_VOICE, RATES, VOICES } from './voice.
 import { getSetting, setSetting as setLineSetting, addRule, listRules, removeRule } from './rules.js';
 import { addMyRoutes } from './my.js';
 import { addHomeRoutes } from './home.js';
-import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor, lineContext } from './admin.js';
+import { addAdminRoutes, blockInfo, roleOf, blockPhone, unblockPhone, recentAll, phoneSummary, createAdminCode, addStaff, removeStaff, staffList, showPhone, isBlocked, logQuery, logAnswer, recentFor, qaFor, lineContext } from './admin.js';
 import { adminChat } from './ai.js';
 
 const T = (data) => ({ type: 'text', data: clean(data) });
@@ -170,12 +170,38 @@ const spokenSite = (p) => `${(cfg.baseUrl || '').replace(/^https?:\/\//, '').rep
 
 const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מפורטות יותר, וזיכרון גדול יותר. כדי להצטרף, תורמים מפתח חינמי של גרוק. נכנסים לכתובת ${spokenSite('donate')}, באנגלית, ושם יש הסבר של דקה איך להשיג מפתח. בטופס מזינים גם את מספר הטלפון שממנו מתקשרים, וההטבות מתחילות מיד`;
 
+// ---------- היסטוריה: שומעים שאלות ותשובות קודמות, ואפשר להמשיך מכל אחת ----------
+const spokenWhen = (t) => new Date(t).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+async function historyMode(call) {
+  if (!call.phone) return speak(call, 'אין היסטוריה לשיחה ממספר חסוי');
+  const items = qaFor(call.phone, 15);
+  if (!items.length) return speak(call, 'עדיין אין היסטוריה');
+  let i = 0;
+  while (true) {
+    const it = items[i];
+    const c = await ask(call, `${i + 1} מתוך ${items.length}. ${spokenWhen(it.t)}. שאלת: ${it.q}. לשמיעת התשובה הקש 1, להבאה אחריה 2, לקודמת 4, להמשך שיחה מהנושא הזה 5, לחזרה 0`, [0, 1, 2, 4, 5], { sec_wait: 8, allow_empty: true, empty_val: '2' });
+    if (c === '0') return;
+    if (c === '1') await speak(call, it.a || 'לא נשמרה תשובה');
+    else if (c === '4') i = Math.max(0, i - 1);
+    else if (c === '5') {
+      users.saveLastChat(call.phone, [{ role: 'user', text: it.q }, { role: 'model', text: it.a || '' }]);
+      return chatMode(call, { prompt: 'ממשיכים מהנושא הזה. מה תרצו לשאול?' });
+    } else if (c === '2') {
+      if (i + 1 >= items.length) {
+        await speak(call, 'זו הייתה האחרונה');
+        return;
+      }
+      i += 1;
+    }
+  }
+}
+
 // ---------- שלוחה 1: צ'אט ----------
 // שיחה רציפה עם העוזר: מדברים, הוא עונה, ומיד אפשר לדבר שוב. בלי תפריטים באמצע.
 // לחיצה על 1 באמצע תשובה עוצרת אותה. "די" / "תפריט" / שתי שתיקות - חזרה לתפריט.
 // העוזר גם מבצע פעולות: חיפוש עדכני, כניסה לאתר, פורום, מייל, זיכרון, הגדרות.
 async function chatMode(call, opts = {}) {
-  // ממשיכים את השיחה הקודמת אם היא הייתה ב-12 השעות האחרונות
+  // ממשיכים את השיחה הקודמת אם היא הייתה ב-3 הימים האחרונים
   const prev = users.getLastChat(call.phone);
   const history = prev ? [...prev] : [];
   const persona = () => users.personaOf(call.phone);
@@ -195,6 +221,11 @@ async function chatMode(call, opts = {}) {
     silent = 0;
     if (/^\s*(תחזור על זה|שוב|עוד פעם|לא שמעתי)\s*[.?!]*\s*$/.test(q) && last) {
       await speak(call, last);
+      continue;
+    }
+    if (/^\s*(היסטוריה|ההיסטוריה|מה שאלתי|מה דיברנו|שיחות קודמות)[^.?!]{0,15}[.?!]?\s*$/.test(q)) {
+      await historyMode(call);
+      await speak(call, 'חזרנו לשיחה. מה עוד?');
       continue;
     }
     if (!(await quotaOk(call))) return;
@@ -965,11 +996,10 @@ async function personalMode(call) {
     const u = users.getUser(call.phone);
     const state = u?.google?.refresh || u?.app || u?.gs?.url ? 'הג׳ימייל שלך מחובר' : 'הג׳ימייל שלך עדיין לא מחובר';
     const np = users.getPrefs(call.phone).length;
-    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת החיפושים האחרונים שלך הקש 1, לחיבור ג׳ימייל או מתמחים טופ הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
+    const c = await ask(call, `האיזור האישי. ${state}. ${np ? `העוזר זוכר עליך ${np} דברים` : ''}. לשמיעת ההיסטוריה שלך, שאלות ותשובות, הקש 1, לחיבור ג׳ימייל או מתמחים טופ הקש 2, כדי לספר לעוזר משהו או להגיד לו איך לענות לך הקש 3, לשמיעת מה שהעוזר זוכר עליך הקש 4, למחיקת כל מה שהעוזר זוכר הקש 5, ${isDonor(call.phone) ? 'אתה מתומכי הקו, תודה' : 'כדי לשמוע איך להיות מתומכי הקו ולקבל הטבות הקש 6'}, לקבלת קוד כניסה לאיזור האישי באתר הקש 7, להגדרות קול ואורך תשובות הקש 8, לקיצורי אתרים הקש 9, לתפריט הראשי הקש 0`, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], { sec_wait: 9, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
-      const mine = recentFor(call.phone, 3);
-      await speak(call, mine.length ? mine.map((r, i) => `${i + 1}, ${r.q}`).join('. ') : 'עדיין אין חיפושים');
+      await historyMode(call);
     } else if (c === '2') {
       const w = await ask(call, 'לחיבור חשבון גוגל, מייל יומן ודרייב, הקישו 1. לחיבור ג׳ימייל בסיסמת אפליקציה, 3. לחיבור החשבון במתמחים טופ, 2. לחזרה, 0', [0, 1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '0' });
       if (w === '1') {

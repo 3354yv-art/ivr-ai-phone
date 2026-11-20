@@ -280,16 +280,16 @@ export function nameOf(phone) {
   }
   return '';
 }
-// השיחה האחרונה עם העוזר, כדי להמשיך ממנה בשיחה הבאה (נשמרת 12 שעות)
+// השיחה האחרונה עם העוזר, כדי להמשיך ממנה בשיחה הבאה (נשמרת 3 ימים)
 export function saveLastChat(phone, history) {
   const k = normPhone(phone);
   if (!k) return;
-  db[k] = { ...(db[k] || {}), lastChat: { t: Date.now(), h: history.slice(-8).map((m) => ({ role: m.role, text: String(m.text).slice(0, 600) })) } };
+  db[k] = { ...(db[k] || {}), lastChat: { t: Date.now(), h: history.slice(-12).map((m) => ({ role: m.role, text: String(m.text).slice(0, 600) })) } };
   save();
 }
 export function getLastChat(phone) {
   const c = getUser(phone)?.lastChat;
-  return c && Date.now() - c.t < 12 * 3600_000 ? c.h : null;
+  return c && Date.now() - c.t < 72 * 3600_000 ? c.h : null;
 }
 
 export const personaOf = (phone) => getPrefs(phone).join('. ');
