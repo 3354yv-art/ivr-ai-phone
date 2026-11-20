@@ -101,6 +101,7 @@ ${users.hasWebPassword(phone) ? '<form method="post" action="/my/password/off"><
 <div class="card"><h2>הגדרות</h2><form method="post" action="/my/settings">
 ${googleVoiceOn() ? `<p>קול העוזר: <select name="voice">${VOICES.map((x) => `<option value="${x.id}" ${((u.settings || {}).voice || '') === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></p>
 <p>מהירות דיבור: <select name="speed">${[['slow', 'איטי'], ['normal', 'רגיל'], ['fast', 'מהיר']].map(([k, n]) => `<option value="${k}" ${((u.settings || {}).speed || 'normal') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></p>` : '<p class="note">בחירת קולות תופעל כשהמנהל יגדיר מפתח של גוגל קלאוד.</p>'}
+<p><label><input type="checkbox" name="alwaysSearch" value="1" ${(u.settings || {}).alwaysSearch !== false ? 'checked' : ''}> העוזר יחפש ברשת בכל שאלה (מדויק יותר, קצת יותר איטי)</label></p>
 <p>אורך התשובות: <select name="length">${[['short', 'קצרות'], ['medium', 'בינוניות'], ['long', 'מפורטות']].map(([k, n]) => `<option value="${k}" ${((u.settings || {}).length || 'medium') === k ? 'selected' : ''}>${n}</option>`).join('')}</select></p><button>שמור הגדרות</button></form></div>
 <div class="card"><h2>קיצורי אתרים</h2><p>שם קצר לאתר שאתם נכנסים אליו הרבה. בקו: חיפוש ואתרים, ואז 4. או פשוט אומרים את השם בכניסה לאתר.</p><ul>${(u.shortcuts || []).map((s, i) => `<li><b>${esc(s.name)}</b>: <span dir="ltr">${esc(s.url)}</span> <form method="post" action="/my/shortcut/del" style="display:inline"><input type="hidden" name="i" value="${i}"><button class="gray" style="padding:2px 10px;font-size:13px">מחק</button></form></li>`).join('') || '<li>אין עדיין</li>'}</ul>
 <form method="post" action="/my/shortcut"><input name="name" placeholder="שם הקיצור, למשל: חדשות" required maxlength="60" style="width:100%"><input name="url" dir="ltr" placeholder="https://..." required style="width:100%"><button>הוסף קיצור</button></form></div>
@@ -211,6 +212,7 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
     if (VOICES.some((x) => x.id === b.voice)) users.setSetting(p, 'voice', b.voice);
     if (['slow', 'normal', 'fast'].includes(b.speed)) users.setSetting(p, 'speed', b.speed);
     if (['short', 'medium', 'long'].includes(b.length)) users.setSetting(p, 'length', b.length);
+    users.setSetting(p, 'alwaysSearch', b.alwaysSearch === '1');
     back(res, 'ההגדרות נשמרו');
   });
   app.post('/my/shortcut', (req, res) => {

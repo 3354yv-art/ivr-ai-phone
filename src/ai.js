@@ -38,7 +38,10 @@ const ACTIONS = ` אתה גם יכול לבצע פעולות בשביל המתק
 
 const nowLine = () => ` עכשיו ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} (שעון ישראל).`;
 
-export async function chat(history, userText, persona = '', withActions = false) {
+// כשהחיפוש ברשת בכל שאלה פעיל: כמעט כל שאלה הופכת לחיפוש, עם שאילתה שלמה שכוללת את ההקשר מהשיחה
+const ALWAYS = ` המתקשר ביקש שתחפש ברשת בכל שאלה. לכן על כל שאלה או בקשה למידע החזר @@{"action":"search","query":"..."}, כשהשאילתה שלמה ועומדת בפני עצמה (השלם מההקשר של השיחה, למשל "ומה עם אחיו?" -> שם האח המלא). ענה בלי חיפוש רק על ברכות, תודות ושיחת חולין קצרה.`;
+
+export async function chat(history, userText, persona = '', withActions = false, alwaysSearch = false) {
   if (legacy) {
     if (withActions) {
       const c = String(userText);
@@ -47,12 +50,16 @@ export async function chat(history, userText, persona = '', withActions = false)
       if (/מתמחים/.test(c)) return { action: 'forum' };
       const rm = c.match(/^תזכור\s*ש?(.+)/);
       if (rm) return { action: 'remember', text: rm[1].trim() };
+      if (alwaysSearch && !/^(שלום|תודה)/.test(c)) {
+        if (globalThis.__mockDelay) await new Promise((r) => setTimeout(r, globalThis.__mockDelay));
+        return { action: 'search', query: c };
+      }
     }
     const t = await gemini.chat(history, userText);
     return withActions ? { text: t } : t;
   }
   const messages = [
-    { role: 'system', content: sys(persona) + nowLine() + (withActions ? ACTIONS : '') },
+    { role: 'system', content: sys(persona) + nowLine() + (withActions ? ACTIONS + (alwaysSearch ? ALWAYS : '') : '') },
     ...history.slice(-10).map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
     { role: 'user', content: userText },
   ];

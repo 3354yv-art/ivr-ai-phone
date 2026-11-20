@@ -172,12 +172,13 @@ const donateInfo = () => `תומכי הקו מקבלים מענה מהיר בע�
 // שיחה רציפה עם העוזר: מדברים, הוא עונה, ומיד אפשר לדבר שוב. בלי תפריטים באמצע.
 // לחיצה על 1 באמצע תשובה עוצרת אותה. "די" / "תפריט" / שתי שתיקות - חזרה לתפריט.
 // העוזר גם מבצע פעולות: חיפוש עדכני, כניסה לאתר, פורום, מייל, זיכרון, הגדרות.
-async function chatMode(call) {
+async function chatMode(call, opts = {}) {
   // ממשיכים את השיחה הקודמת אם היא הייתה ב-12 השעות האחרונות
   const prev = users.getLastChat(call.phone);
   const history = prev ? [...prev] : [];
   const persona = () => users.personaOf(call.phone);
-  let prompt = call.chatHintGiven ? 'כן?' : 'דברו אחרי הצליל, ובסיום הקישו סולמית';
+  let prompt = opts.prompt || (call.chatHintGiven ? 'כן?' : 'דברו אחרי הצליל, ובסיום הקישו סולמית');
+  let sources = [];
   call.chatHintGiven = true;
   let silent = 0;
   let last = '';
@@ -195,7 +196,23 @@ async function chatMode(call) {
       continue;
     }
     if (!(await quotaOk(call))) return;
-    const r = await waitFor(call, ai.chat(history, q, persona(), true));
+    // "תיכנס לתוצאה השנייה" אחרי חיפוש
+    const ord = sources.length && q.match(/(?:תיכנס|תפתח|כנס|פתח)[^\d]*(ראשונ|שני|שלישי|רביעי|1|2|3|4)/);
+    if (ord) {
+      const n = { ראשונ: 0, שני: 1, שלישי: 2, רביעי: 3, 1: 0, 2: 1, 3: 2, 4: 3 }[ord[1]];
+      if (sources[n]) {
+        await speak(call, `נכנס ל${sources[n].title}`);
+        await browse(call, sources[n].url);
+        await speak(call, 'חזרנו. מה עוד?');
+        continue;
+      }
+    }
+    if (/^\s*(מקורות|איפה מצאת|מאיפה זה)\s*[?.!]*\s*$/.test(q) && sources.length) {
+      await speak(call, `מצאתי ב: ${sources.slice(0, 4).map((s, i) => `${i + 1}, ${s.title}`).join('. ')}. כדי להיכנס, אמרו למשל תיכנס לראשון`);
+      continue;
+    }
+    const always = opts.forceSearch || users.getSettings(call.phone).alwaysSearch !== false;
+    const r = await waitFor(call, ai.chat(history, q, persona(), true, always));
     history.push({ role: 'user', text: q });
     let answer = '';
     switch (r.action) {
@@ -208,8 +225,9 @@ async function chatMode(call) {
           answer = 'חזרנו לשיחה. מה עוד?';
           break;
         }
-        const res = await waitFor(call, ai.search(r.query || q, persona()));
+        const res = await waitFor(call, ai.search(await waitFor(call, ai.fixQuery(r.query || q)), persona()));
         answer = res.answer;
+        sources = res.sources || [];
         break;
       }
       case 'site': {
@@ -694,48 +712,8 @@ async function forumMode(call, host) {
 
 // ---------- שלוחה 3: חיפוש ----------
 async function searchMode(call) {
-  while (true) {
-    let q = await listen(call, 'מה לחפש בגוגל', 25, 'חיפוש');
-    if (!q) {
-      const c = await ask(call, 'לא שמעתי. לנסות שוב הקש 1, לתפריט הראשי הקש 0', [0, 1], { allow_empty: true, empty_val: '0' });
-      if (c === '1') continue;
-      return;
-    }
-    if (!(await quotaOk(call))) return;
-    if (/מתמחים|mitmachim/i.test(q)) {
-      await forumMode(call, 'mitmachim.top');
-      return;
-    }
-    q = await waitFor(call, ai.fixQuery(q));
-    const res = await waitFor(call, ai.search(q, users.personaOf(call.phone)));
-    let more = true;
-    while (more) {
-      const sr = await speak(call, res.answer);
-      if (sr === 'stop') {
-        const pseudo = { title: q, text: res.answer, links: res.sources.map((x) => ({ text: x.title, url: x.url })) };
-        const act = await agentCommand(call, pseudo);
-        if (act?.action === 'open') {
-          await speak(call, `נכנס ל${act.title}`);
-          await browse(call, act.url);
-          continue;
-        }
-        if (act?.action === 'summary' || act?.action === 'answer') await speak(call, act.action === 'answer' ? act.text || 'אין לי תשובה' : await waitFor(call, ai.summarize(res.answer)));
-        if (act?.action === 'read') continue;
-      }
-      const opts = res.sources.length
-        ? 'לשמיעת האתרים שנמצאו הקש 1, לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0'
-        : 'לשמיעה חוזרת הקש 2, לחיפוש חדש הקש 3, לתפריט הראשי הקש 0';
-      const c = await ask(call, opts, [0, 1, 2, 3], { sec_wait: 8, allow_empty: true, empty_val: '3' });
-      if (c === '0') return;
-      if (c === '3') more = false;
-      else if (c === '1' && res.sources.length) {
-        const list = res.sources.map((s, i) => `אתר ${i + 1}, ${s.title}`).join(', ');
-        const n = await ask(call, `${list}. הקש את מספר האתר לכניסה, או אפס לחזרה`, [0, ...res.sources.map((_, i) => i + 1)], { sec_wait: 12, allow_empty: true, empty_val: '0' });
-        const s = res.sources[Number(n) - 1];
-        if (s) await browse(call, s.url);
-      }
-    }
-  }
+  // חיפוש כשיחה: אומרים מה לחפש, שומעים תשובה, ומיד אפשר לשאול עוד או לומר "תיכנס לראשון", "מקורות", "די"
+  return chatMode(call, { forceSearch: true, prompt: 'מה לחפש? אחרי הצליל, ובסיום סולמית' });
 }
 
 // קיצורים: של המתקשר, ושל המנהל לכולם
@@ -997,7 +975,8 @@ async function personalMode(call) {
 async function settingsMode(call) {
   if (!call.phone) return speak(call, 'אי אפשר לשמור הגדרות משיחה ממספר חסוי');
   while (true) {
-    const c = await ask(call, 'לבחירת קול, הקישו 1. לאורך התשובות, 2. למהירות הדיבור, 3. לחזרה, 0', [0, 1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '0' });
+    const as = users.getSettings(call.phone).alwaysSearch !== false;
+    const c = await ask(call, `לבחירת קול, הקישו 1. לאורך התשובות, 2. למהירות הדיבור, 3. ${as ? 'כדי שהעוזר לא יחפש ברשת בכל שאלה' : 'כדי שהעוזר יחפש ברשת בכל שאלה'}, 4. לחזרה, 0`, [0, 1, 2, 3, 4], { sec_wait: 7, allow_empty: true, empty_val: '0' });
     if (c === '0') return;
     if (c === '1') {
       if (!googleVoiceOn()) {
@@ -1015,6 +994,10 @@ async function settingsMode(call) {
       const n = await ask(call, 'לתשובות קצרות, 1. בינוניות, 2. מפורטות, 3', [1, 2, 3], { sec_wait: 7, allow_empty: true, empty_val: '2' });
       users.setSetting(call.phone, 'length', { 1: 'short', 2: 'medium', 3: 'long' }[n]);
       await speak(call, 'נשמר');
+    } else if (c === '4') {
+      const as = users.getSettings(call.phone).alwaysSearch !== false;
+      users.setSetting(call.phone, 'alwaysSearch', !as);
+      await speak(call, as ? 'מעכשיו העוזר יענה מהידע שלו, ויחפש רק כשצריך' : 'מעכשיו העוזר יחפש ברשת בכל שאלה');
     } else if (c === '3') {
       if (!googleVoiceOn()) {
         await speak(call, 'שינוי מהירות זמין רק עם הקולות של גוגל, שעדיין לא הופעלו בקו');
