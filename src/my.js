@@ -103,6 +103,12 @@ ${(() => {
 <p>בדף שנפתח: Ctrl+A ואז Ctrl+V בתוך הקוד. אחר כך <b>Deploy</b> ← <b>New deployment</b> ← <b>Web app</b>, ב-Who has access בוחרים <b>Anyone</b>, <b>Deploy</b>, מאשרים, ולוחצים על הקישור שמופיע.</p>
 <textarea id="gscode" readonly dir="ltr" style="width:100%;height:50px;font-family:monospace;font-size:11px;opacity:.6">${esc(gs.scriptCode(secret))}</textarea>
 <form method="post" action="/my/gscript"><input name="url" dir="ltr" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%"><button>חבר לפי כתובת</button></form>`;
+      if (cfg.gsWebApp) return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
+<p style="font-size:19px"><a href="${cfg.gsWebApp}?phone=${encodeURIComponent(users.normPhone(phone))}&code=${encodeURIComponent(code)}" target="_blank"><b>לחצו כאן להתחברות</b></a>, ואשרו לגוגל את הגישה כשהיא מבקשת.</p>
+<p class="note">באישור, גוגל מזהירה שהאפליקציה לא מאומתת. זה רגיל: לוחצים <b>Advanced</b> (מתקדם) ← <b>Go to</b> (מעבר אל) ← <b>Allow</b> (אישור). הקוד רץ רק בחשבון שלכם, ובדף שנפתח תופיע הודעה קצרה שהחיבור הצליח.</p>
+<p class="note">הדף הזה יתעדכן לבד כשהחיבור יצליח.</p>
+<details><summary class="note">דרך אחרת (למתקדמים)</summary>${manual}</details></div>
+<script>setInterval(function(){fetch('/my/gs-status').then(function(r){return r.text()}).then(function(t){if(t==='1')location.reload()})},4000)</script>`;
       if (!cfg.gsTemplate) return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>${manual}</div><script>setInterval(function(){fetch('/my/gs-status').then(function(r){return r.text()}).then(function(t){if(t==='1')location.reload()})},4000)</script>`;
       return `<div class="card" id="gcard"><h2>חיבור חשבון גוגל (מייל, יומן, דרייב)</h2>
 <p style="font-size:19px"><b>1.</b> <a href="https://docs.google.com/spreadsheets/d/${cfg.gsTemplate}/copy" target="_blank"><b>לחצו כאן</b></a>, ואז על הכפתור <b>Make a copy</b> (יצירת עותק).</p>
