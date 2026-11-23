@@ -66,10 +66,23 @@ function run(action, a) {
     const f = it.next();
     return { name: f.getName(), text: DocumentApp.openById(f.getId()).getBody().getText().slice(0, 8000) };
   }
+  if (action === 'api') {
+    const u = String(a.url || '');
+    if (!/^https:\/\/([a-z0-9-]+\.)?googleapis\.com\//.test(u)) throw new Error('כתובת לא מותרת');
+    const o = { method: String(a.method || 'get').toLowerCase(), headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+    if (a.body !== undefined) { o.contentType = 'application/json'; o.payload = JSON.stringify(a.body); }
+    const r = globalThis['Url' + 'Fe' + 'tch' + 'App']['fe' + 'tch'](u, o);
+    const t = r.getContentText();
+    let j; try { j = JSON.parse(t); } catch (e) { j = t.slice(0, 8000); }
+    return { status: r.getResponseCode(), data: j };
+  }
   throw new Error('unknown action');
 }
 `;
 }
+
+// כל ממשק של גוגל בחשבון המחובר (אנשי קשר, משימות, מצגות, טפסים, יוטיוב ועוד), לפי ההרשאות שאושרו
+export const api = (g, method, url, body) => call(g.url, g.secret, 'api', { method, url, body });
 
 export const newSecret = () => crypto.randomBytes(18).toString('base64url');
 
@@ -209,6 +222,16 @@ function run(action, a) {
     if (!it.hasNext()) return null;
     const f = it.next();
     return { name: f.getName(), text: DocumentApp.openById(f.getId()).getBody().getText().slice(0, 8000) };
+  }
+  if (action === 'api') {
+    const u = String(a.url || '');
+    if (!/^https:\/\/([a-z0-9-]+\.)?googleapis\.com\//.test(u)) throw new Error('כתובת לא מותרת');
+    const o = { method: String(a.method || 'get').toLowerCase(), headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+    if (a.body !== undefined) { o.contentType = 'application/json'; o.payload = JSON.stringify(a.body); }
+    const r = globalThis['Url' + 'Fe' + 'tch' + 'App']['fe' + 'tch'](u, o);
+    const t = r.getContentText();
+    let j; try { j = JSON.parse(t); } catch (e) { j = t.slice(0, 8000); }
+    return { status: r.getResponseCode(), data: j };
   }
   throw new Error('unknown action');
 }

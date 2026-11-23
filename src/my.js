@@ -95,7 +95,7 @@ ${(() => {
       if (g) {
         const pull = g.url.startsWith('pull:');
         const seen = pull ? gs.lastSeen(users.normPhone(phone)) : 0;
-        return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב.</p>${pull ? `<p class="note">${seen ? `הסנכרון האחרון עם גוגל: ${fmt(seen)}` : 'מחכה לסנכרון הראשון (עד דקה)'}</p>` : ''}<form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
+        return `<div class="card"><h2>חשבון גוגל</h2><p class="ok">מחובר${g.email ? `: <b dir="ltr">${esc(g.email)}</b>` : ''}. העוזר בקו יכול לקרוא ולענות למיילים, לספר מה יש ביומן ולקבוע אירועים, ולחפש קבצים ומסמכים בדרייב. החיבור כולל גם אנשי קשר, משימות, מצגות, טפסים ויוטיוב.</p>${pull ? `<p class="note">${seen ? `הסנכרון האחרון עם גוגל: ${fmt(seen)}` : 'מחכה לסנכרון הראשון (עד דקה)'}</p>` : ''}<form method="post" action="/my/gscript/off"><button class="red">נתק</button></form></div>`;
       }
       const code = users.gsLinkCode(phone);
       const secret = users.gsSecret(phone, gs.newSecret);
