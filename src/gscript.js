@@ -68,7 +68,7 @@ function run(action, a) {
   }
   if (action === 'api') {
     const u = String(a.url || '');
-    if (!/^https:\/\/([a-z0-9-]+\.)?googleapis\.com\//.test(u)) throw new Error('כתובת לא מותרת');
+    if (!/^https:\\/\\/([a-z0-9-]+\\.)?googleapis\\.com\\//.test(u)) throw new Error('כתובת לא מותרת');
     const o = { method: String(a.method || 'get').toLowerCase(), headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
     if (a.body !== undefined) { o.contentType = 'application/json'; o.payload = JSON.stringify(a.body); }
     const r = globalThis['Url' + 'Fe' + 'tch' + 'App']['fe' + 'tch'](u, o);
@@ -225,7 +225,7 @@ function run(action, a) {
   }
   if (action === 'api') {
     const u = String(a.url || '');
-    if (!/^https:\/\/([a-z0-9-]+\.)?googleapis\.com\//.test(u)) throw new Error('כתובת לא מותרת');
+    if (!/^https:\\/\\/([a-z0-9-]+\\.)?googleapis\\.com\\//.test(u)) throw new Error('כתובת לא מותרת');
     const o = { method: String(a.method || 'get').toLowerCase(), headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
     if (a.body !== undefined) { o.contentType = 'application/json'; o.payload = JSON.stringify(a.body); }
     const r = globalThis['Url' + 'Fe' + 'tch' + 'App']['fe' + 'tch'](u, o);
