@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 // נקודת הכניסה ל-AI. כברירת מחדל: שרשרת גיבוי של ספקים (Groq, Cerebras, Cloudflare, מקומי).
 // AI_PROVIDER=gemini מפעיל את Gemini בלבד. במצב בדיקה (MOCK) נשאר המדמה.
 import * as gemini from './gemini.js';
@@ -103,33 +101,14 @@ export async function fixQuery(q) {
 
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
 // תשובות זהות נשמרות 10 דקות כדי לענות מיד.
-// חיפוש גוגל אמיתי דרך שירות SERP (Bright Data). מכסה חודשית חינמית נשמרת בקובץ; כשנגמרת או בכשל - חיפוש רגיל, ובתחילת חודש חוזרים לגוגל
-const serpFile = () => path.join(cfg.dataDir, 'serp-usage.json');
-const monthKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }).slice(0, 7);
-let serpBlockedUntil = 0;
-function serpQuota() {
-  if (!cfg.brightKey || !cfg.brightZone || Date.now() < serpBlockedUntil) return false;
-  let u = {};
-  try { u = JSON.parse(fs.readFileSync(serpFile(), 'utf8')); } catch {}
-  if (u.month !== monthKey()) u = { month: monthKey(), n: 0 };
-  if (u.n >= cfg.brightMonthly) return false;
-  u.n++;
-  try { fs.mkdirSync(cfg.dataDir, { recursive: true }); fs.writeFileSync(serpFile(), JSON.stringify(u)); } catch {}
-  return true;
-}
-async function googleSerp(query) {
-  const r = await fetch('https://api.brightdata.com/request', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.brightKey}` },
-    body: JSON.stringify({ zone: cfg.brightZone, url: `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=iw&gl=il&brd_json=1`, format: 'raw' }),
-    signal: AbortSignal.timeout(6500),
-  });
-  if (!r.ok) {
-    if ([401, 402, 403, 429].includes(r.status)) serpBlockedUntil = Date.now() + 3600000;
-    throw new Error(`serp ${r.status}`);
-  }
+// מנוע חיפוש מקומי (SearXNG) שרץ על השרת ומשלב כמה מנועי חיפוש. בכשל חוזרים לחיפוש הרגיל, ומנסים שוב אחרי דקה
+let searxBlockedUntil = 0;
+async function searxSearch(query) {
+  const u = `${cfg.searxUrl}/search?format=json&language=he&safesearch=1&q=${encodeURIComponent(query)}`;
+  const r = await fetch(u, { signal: AbortSignal.timeout(4500) });
+  if (!r.ok) throw new Error(`searx ${r.status}`);
   const j = await r.json();
-  return (j.organic || []).slice(0, 6).map((x) => ({ title: x.title || '', url: x.link || '', snippet: x.description || '' })).filter((x) => x.title);
+  return (j.results || []).slice(0, 6).map((x) => ({ title: x.title || '', url: x.url || '', snippet: x.content || '' })).filter((x) => x.title);
 }
 
 export async function search(query, persona = '') {
@@ -138,11 +117,12 @@ export async function search(query, persona = '') {
   const hit = cached(key);
   if (hit) return hit;
   let google = [];
-  if (serpQuota()) {
+  if (cfg.searxUrl && Date.now() >= searxBlockedUntil) {
     try {
-      google = await googleSerp(query);
-    } catch (e) {
-      serpBlockedUntil = Math.max(serpBlockedUntil, Date.now() + 60000);
+      google = await searxSearch(query);
+      if (!google.length) searxBlockedUntil = Date.now() + 15000;
+    } catch {
+      searxBlockedUntil = Date.now() + 60000;
     }
   }
   const [web, wk] = google.length ? [[], []] : await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
