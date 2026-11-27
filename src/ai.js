@@ -119,13 +119,14 @@ export async function search(query, persona = '') {
   // חיפוש גוגל אמיתי (Gemini), עד מכסה יומית חינמית; אחרי המכסה או בכשל חוזרים לחיפוש הרגיל
   if (cfg.geminiKey && googleQuota()) {
     try {
-      const g = await within(gemini.search(query), 7000, null);
+      const g = await Promise.race([gemini.search(query), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 7000))]);
       if (g?.answer && g.answer !== 'לא מצאתי תשובה') {
         remember(key, g);
         return g;
       }
     } catch (e) {
-      if (/429/.test(String(e.message))) googleBlockedUntil = Date.now() + 3600000;
+      // מכסה/הרשאה: מפסיקים לנסות לשעה כדי לא להאט כל חיפוש
+      googleBlockedUntil = Date.now() + (/429|403|400/.test(String(e.message)) ? 3600000 : 60000);
     }
   }
   const [web, wk] = await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
