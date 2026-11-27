@@ -308,7 +308,10 @@ async function chatMode(call, opts = {}) {
         break;
       case 'calendar':
       case 'add_event':
-      case 'drive': {
+      case 'drive':
+      case 'contacts':
+      case 'tasks':
+      case 'add_task': {
         const g = users.getGScript(call.phone);
         if (!g) {
           answer = 'בשביל זה צריך לחבר את חשבון הגוגל שלך. עושים את זה באיזור האישי באתר, בכרטיס חיבור חשבון גוגל';
@@ -319,6 +322,18 @@ async function chatMode(call, opts = {}) {
             const evs = await waitFor(call, gscript.call(g.url, g.secret, 'events', { date: r.date }));
             const t = (x) => new Date(x).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
             answer = evs.length ? `ביומן יש ${evs.length} אירועים. ${evs.map((e) => `${e.allDay ? 'כל היום' : `בשעה ${t(e.start)}`}, ${e.title}`).join('. ')}` : 'אין אירועים ביומן ביום הזה';
+          } else if (r.action === 'contacts') {
+            const u = 'https://people.googleapis.com/v1/people:searchContacts?readMask=names,phoneNumbers&query=' + encodeURIComponent(r.query || '');
+            const x = await waitFor(call, gscript.api(g, 'get', u));
+            const hits = (x.data?.results || []).map((h) => h.person).filter((p) => p?.phoneNumbers?.length).slice(0, 3);
+            answer = hits.length ? hits.map((p) => `${p.names?.[0]?.displayName || ''}: ${p.phoneNumbers[0].value.replace(/\D/g, '').split('').join(' ')}`).join('. ') : 'לא מצאתי איש קשר כזה';
+          } else if (r.action === 'tasks') {
+            const x = await waitFor(call, gscript.api(g, 'get', 'https://tasks.googleapis.com/tasks/v1/lists/@default/tasks?showCompleted=false&maxResults=20'));
+            const ts = (x.data?.items || []).map((t) => t.title).filter(Boolean);
+            answer = ts.length ? `יש ${ts.length} משימות. ${ts.join('. ')}` : 'אין משימות פתוחות';
+          } else if (r.action === 'add_task') {
+            await waitFor(call, gscript.api(g, 'post', 'https://tasks.googleapis.com/tasks/v1/lists/@default/tasks', { title: String(r.title || '').slice(0, 200) }));
+            answer = 'הוספתי את המשימה';
           } else if (r.action === 'add_event') {
             const ok = await ask(call, `לקבוע ביומן: ${r.title}, ב-${new Date(r.start).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}? לאישור הקישו 1, לביטול 2`, [1, 2], { sec_wait: 8, allow_empty: true, empty_val: '2' });
             if (ok === '1') {
