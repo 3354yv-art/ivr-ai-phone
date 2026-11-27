@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 // נקודת הכניסה ל-AI. כברירת מחדל: שרשרת גיבוי של ספקים (Groq, Cerebras, Cloudflare, מקומי).
 // AI_PROVIDER=gemini מפעיל את Gemini בלבד. במצב בדיקה (MOCK) נשאר המדמה.
 import * as gemini from './gemini.js';
@@ -101,14 +103,33 @@ export async function fixQuery(q) {
 
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
 // תשובות זהות נשמרות 10 דקות כדי לענות מיד.
-let googleDay = '';
-let googleCount = 0;
-let googleBlockedUntil = 0;
-function googleQuota() {
-  if (Date.now() < googleBlockedUntil) return false;
-  const d = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  if (d !== googleDay) { googleDay = d; googleCount = 0; }
-  return ++googleCount <= Number(process.env.GOOGLE_SEARCH_DAILY || 400);
+// חיפוש גוגל אמיתי דרך שירות SERP (Bright Data). מכסה חודשית חינמית נשמרת בקובץ; כשנגמרת או בכשל - חיפוש רגיל, ובתחילת חודש חוזרים לגוגל
+const serpFile = () => path.join(cfg.dataDir, 'serp-usage.json');
+const monthKey = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jerusalem' }).slice(0, 7);
+let serpBlockedUntil = 0;
+function serpQuota() {
+  if (!cfg.brightKey || !cfg.brightZone || Date.now() < serpBlockedUntil) return false;
+  let u = {};
+  try { u = JSON.parse(fs.readFileSync(serpFile(), 'utf8')); } catch {}
+  if (u.month !== monthKey()) u = { month: monthKey(), n: 0 };
+  if (u.n >= cfg.brightMonthly) return false;
+  u.n++;
+  try { fs.mkdirSync(cfg.dataDir, { recursive: true }); fs.writeFileSync(serpFile(), JSON.stringify(u)); } catch {}
+  return true;
+}
+async function googleSerp(query) {
+  const r = await fetch('https://api.brightdata.com/request', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.brightKey}` },
+    body: JSON.stringify({ zone: cfg.brightZone, url: `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=iw&gl=il&brd_json=1`, format: 'raw' }),
+    signal: AbortSignal.timeout(6500),
+  });
+  if (!r.ok) {
+    if ([401, 402, 403, 429].includes(r.status)) serpBlockedUntil = Date.now() + 3600000;
+    throw new Error(`serp ${r.status}`);
+  }
+  const j = await r.json();
+  return (j.organic || []).slice(0, 6).map((x) => ({ title: x.title || '', url: x.link || '', snippet: x.description || '' })).filter((x) => x.title);
 }
 
 export async function search(query, persona = '') {
@@ -116,21 +137,16 @@ export async function search(query, persona = '') {
   const key = `${query}|${persona}`.trim().toLowerCase();
   const hit = cached(key);
   if (hit) return hit;
-  // חיפוש גוגל אמיתי (Gemini), עד מכסה יומית חינמית; אחרי המכסה או בכשל חוזרים לחיפוש הרגיל
-  if (cfg.geminiKey && googleQuota()) {
+  let google = [];
+  if (serpQuota()) {
     try {
-      const g = await Promise.race([gemini.search(query), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 7000))]);
-      if (g?.answer && g.answer !== 'לא מצאתי תשובה') {
-        remember(key, g);
-        return g;
-      }
+      google = await googleSerp(query);
     } catch (e) {
-      // מכסה/הרשאה: מפסיקים לנסות לשעה כדי לא להאט כל חיפוש
-      googleBlockedUntil = Date.now() + (/429|403|400/.test(String(e.message)) ? 3600000 : 60000);
+      serpBlockedUntil = Math.max(serpBlockedUntil, Date.now() + 60000);
     }
   }
-  const [web, wk] = await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
-  const results = [...web.slice(0, 4), ...wk.slice(0, 2)];
+  const [web, wk] = google.length ? [[], []] : await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
+  const results = google.length ? google : [...web.slice(0, 4), ...wk.slice(0, 2)];
   let out;
   if (results.length) {
     const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet.slice(0, 500)}`).join('\n');
