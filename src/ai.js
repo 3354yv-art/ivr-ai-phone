@@ -101,11 +101,33 @@ export async function fixQuery(q) {
 
 // חיפוש: ויקיפדיה ומנועי חיפוש במקביל; אם אין תוצאות - חיפוש ברשת דרך גרוק; ולבסוף ידע המודל.
 // תשובות זהות נשמרות 10 דקות כדי לענות מיד.
+let googleDay = '';
+let googleCount = 0;
+let googleBlockedUntil = 0;
+function googleQuota() {
+  if (Date.now() < googleBlockedUntil) return false;
+  const d = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  if (d !== googleDay) { googleDay = d; googleCount = 0; }
+  return ++googleCount <= Number(process.env.GOOGLE_SEARCH_DAILY || 400);
+}
+
 export async function search(query, persona = '') {
   if (legacy) return gemini.search(query);
   const key = `${query}|${persona}`.trim().toLowerCase();
   const hit = cached(key);
   if (hit) return hit;
+  // חיפוש גוגל אמיתי (Gemini), עד מכסה יומית חינמית; אחרי המכסה או בכשל חוזרים לחיפוש הרגיל
+  if (cfg.geminiKey && googleQuota()) {
+    try {
+      const g = await within(gemini.search(query), 7000, null);
+      if (g?.answer && g.answer !== 'לא מצאתי תשובה') {
+        remember(key, g);
+        return g;
+      }
+    } catch (e) {
+      if (/429/.test(String(e.message))) googleBlockedUntil = Date.now() + 3600000;
+    }
+  }
   const [web, wk] = await Promise.all([within(ddg(query), 1800, []), within(wiki(query), 1800, [])]);
   const results = [...web.slice(0, 4), ...wk.slice(0, 2)];
   let out;
