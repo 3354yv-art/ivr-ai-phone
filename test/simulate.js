@@ -261,6 +261,18 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const prov = gs.mailProvider('u', secret);
   const un = await prov.unread(5);
   check('סקריפט גוגל: מייל דרך הסקריפט', un[0].from === 'רבקה' && un[0].fromAddr === 'r@x.com');
+  // פקודות קוליות על שירותי גוגל דרך הפעולה הכללית api
+  globalThis.__gscript = (action, args) => {
+    if (action !== 'api') return undefined;
+    const u = String(args.url);
+    if (u.includes('/tasks/v1/')) return { status: 200, data: args.method === 'post' ? {} : { items: [{ title: 'לקנות חלב' }] } };
+    if (u.includes('/drive/v3/files')) return { status: 200, data: { files: [{ name: 'מצגת חגים' }] } };
+    if (u.includes('people.googleapis.com')) return { status: 200, data: { results: [{ person: { names: [{ displayName: 'דוד כהן' }], phoneNumbers: [{ value: '050-123-4567' }] } }] } };
+    if (u.includes('/youtube/v3/playlists')) return { status: 200, data: { items: [{ snippet: { title: 'שיעורים' } }] } };
+    return { status: 404, data: {} };
+  };
+  const GV = await drive('callGv', ['1', 'מה ברשימת המשימות שלי', 'תוסיף משימה לקנות חלב', 'אילו מצגות יש לי', 'מה המספר של דוד', 'אילו רשימות השמעה יש לי', 'די', '0']);
+  check('גוגל בקול: משימות, מצגות, אנשי קשר ויוטיוב', said(GV.transcript, 'לקנות חלב') && said(GV.transcript, 'הוספתי את המשימה') && said(GV.transcript, 'מצגת חגים') && said(GV.transcript, 'דוד כהן') && said(GV.transcript, 'שיעורים'));
   us.removeGScript('0501234567');
   check('סקריפט גוגל: ניתוק', !us.getGScript('0501234567'));
   const s2 = us.gsSecret('0501234567', gs.newSecret);

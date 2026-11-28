@@ -59,6 +59,14 @@ export async function chat(history, userText, persona = '', withActions = false,
       if (/^(די|יציאה|תפריט|ביי)/.test(c)) return { action: 'menu' };
       if (/^תחפש /.test(c)) return { action: 'search', query: c.slice(5) };
       if (/מתמחים/.test(c)) return { action: 'forum' };
+      const at = c.match(/^תוסיף משימה\s*(.+)/);
+      if (at) return { action: 'add_task', title: at[1].trim() };
+      if (/משימות/.test(c)) return { action: 'tasks' };
+      const ct = c.match(/המספר של\s*(.+)/);
+      if (ct) return { action: 'contacts', query: ct[1].trim() };
+      const fl = c.match(/אילו (מצגות|טפסים|גיליונות|מסמכים)/);
+      if (fl) return { action: 'files', kind: { מצגות: 'slides', טפסים: 'forms', גיליונות: 'sheets', מסמכים: 'docs' }[fl[1]], query: '' };
+      if (/רשימות השמעה/.test(c)) return { action: 'youtube_mine', what: 'playlists' };
       const rm = c.match(/^תזכור\s*ש?(.+)/);
       if (rm) return { action: 'remember', text: rm[1].trim() };
       if (alwaysSearch && !/^(שלום|תודה)/.test(c)) {
