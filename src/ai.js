@@ -3,6 +3,7 @@
 import * as gemini from './gemini.js';
 import { ddg, wiki } from './local.js';
 import { cfg } from './config.js';
+import { fetchPage } from './web.js';
 import { SYSTEM as BASE, complete, transcribeChain, webAnswer } from './llm.js';
 import { rulesPrompt, listRules } from './rules.js';
 import { callerPhone } from './ctx.js';
@@ -49,7 +50,7 @@ const ACTIONS = ` אתה גם יכול לבצע פעולות בשביל המתק
 const nowLine = () => ` עכשיו ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })} (שעון ישראל).`;
 
 // כשהחיפוש ברשת בכל שאלה פעיל: כמעט כל שאלה הופכת לחיפוש, עם שאילתה שלמה שכוללת את ההקשר מהשיחה
-const ALWAYS = ` המתקשר ביקש שתחפש ברשת בכל שאלה. לכן על כל שאלה או בקשה למידע החזר @@{"action":"search","query":"..."}, כשהשאילתה שלמה ועומדת בפני עצמה (השלם מההקשר של השיחה, למשל "ומה עם אחיו?" -> שם האח המלא). ענה בלי חיפוש רק על ברכות, תודות ושיחת חולין קצרה.`;
+const ALWAYS = ` המתקשר ביקש שתחפש ברשת בכל שאלה של מידע. לכן על כל שאלה או בקשה למידע כללי החזר @@{"action":"search","query":"..."}, כשהשאילתה שלמה ועומדת בפני עצמה (השלם מההקשר של השיחה, למשל "ומה עם אחיו?" -> שם האח המלא). חשוב: פעולות אחרות קודמות לחיפוש. בקשה על היומן, המשימות, אנשי הקשר, הקבצים, המייל, כניסה לאתר, הפורום, הגדרות, זיכרון, או חזרה לתפריט - מבצעים בפעולה המתאימה ולא מחפשים. ענה בלי חיפוש על ברכות, תודות ושיחת חולין קצרה.`;
 
 export async function chat(history, userText, persona = '', withActions = false, alwaysSearch = false) {
   if (legacy) {
@@ -131,10 +132,13 @@ export async function search(query, persona = '') {
   const results = google.length ? google : [...web.slice(0, 4), ...wk.slice(0, 2)];
   let out;
   if (results.length) {
-    const ctx = results.map((x, i) => `${i + 1}. ${x.title}. ${x.snippet.slice(0, 500)}`).join('\n');
+    // כשהקטעים קצרים: מביאים גם את תחילת התוכן של שתי התוצאות הראשונות (עד שתי שניות), כדי שהתשובה תהיה מדויקת יותר
+    const thin = results.reduce((n, x) => n + x.snippet.length, 0) < 900;
+    const extra = thin && google.length ? await Promise.all(results.slice(0, 2).map((x) => within(fetchPage(x.url).then((p) => p.text.replace(/\s+/g, ' ').slice(0, 1200)), 2000, ''))) : [];
+    const ctx = results.map((x, i) => `${i + 1}. ${x.title} (${(() => { try { return new URL(x.url).hostname.replace(/^www\./, ''); } catch { return ''; } })()}). ${x.snippet.slice(0, 500)}${extra[i] ? ` תוכן מהדף: ${extra[i]}` : ''}`).join('\n');
     const answer = await complete([
       { role: 'system', content: sys(persona) },
-      { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nענה רק על סמך התוצאות, בלי להוסיף פרטים שלא מופיעים בהן. אם התוצאות לא עונות על השאלה, אמור בכנות שלא מצאת מידע ברור. אם הן לא עונות על השאלה, ענה מהידע שלך.` },
+      { role: 'user', content: `שאלה: ${query}\n\nתוצאות חיפוש:\n${ctx}\n\nהתחל בתשובה הישירה לשאלה במשפט הראשון. ענה רק על סמך התוצאות, בלי להוסיף פרטים שלא מופיעים בהן. כשהמידע עלול להשתנות או שהמקור חשוב, ציין בקצרה את שם האתר, למשל 'לפי ויקיפדיה'. היום הוא ${new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' })}. אם התוצאות לא עונות על השאלה, אמור בכנות שלא מצאת מידע ברור. אם הן לא עונות על השאלה, ענה מהידע שלך.` },
     ], 220);
     out = { answer: answer || 'לא מצאתי תשובה', sources: results.map((x) => ({ title: x.title, url: x.url })) };
   } else {

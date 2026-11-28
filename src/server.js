@@ -280,6 +280,10 @@ async function chatMode(call, opts = {}) {
         const res = await waitFor(call, ai.search(await waitFor(call, ai.fixQuery(r.query || q)), persona()));
         answer = res.answer;
         sources = res.sources || [];
+        if (sources.length && !call.sourcesHinted) {
+          call.sourcesHinted = true;
+          answer += ' אפשר גם לומר תיכנס לראשון, כדי לפתוח את התוצאה הראשונה, או מקורות, כדי לשמוע מאיפה זה.';
+        }
         break;
       }
       case 'site': {
