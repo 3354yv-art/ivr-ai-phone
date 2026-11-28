@@ -147,7 +147,7 @@ ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי ש�
 <li><b>יוטיוב:</b> "אילו רשימות השמעה יש לי", "אחרי אילו ערוצים אני עוקב".</li>
 <li><b>זיכרון והגדרות:</b> "תזכור ש...", "היסטוריה", "תשנה את הקול".</li>
 </ul><p class="note">פעולות המייל, היומן, המשימות, אנשי הקשר והקבצים עובדות אחרי חיבור חשבון גוגל.</p></details></div>
-<div class="card"><h2>השיחות שלי</h2><p class="note">בכחול: מה שאמרתם. באפור: מה שהקו ענה.</p>${hist}</div>`));
+<div class="card"><h2>השיחות שלי</h2><p class="note">בכחול: מה שאמרתם. באפור: מה שהקו ענה.</p><input id="hq" placeholder="חיפוש בשיחות" oninput="for(const m of document.querySelectorAll('#hl .msg'))m.style.display=m.textContent.includes(this.value)?'':'none'" style="width:100%;margin-bottom:8px"><div id="hl">${hist}</div></div>`));
   });
 
   app.post('/my/login', (req, res) => {

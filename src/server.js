@@ -196,6 +196,19 @@ async function historyMode(call) {
   }
 }
 
+// זמני שבת (ירושלים והסביבה, הדלקה 40 דקות לפני השקיעה) מ-hebcal
+async function shabbatTimes() {
+  const r = await fetch('https://www.hebcal.com/shabbat?cfg=json&latitude=31.78&longitude=35.22&tzid=Asia/Jerusalem&b=40&M=on&lg=he', { signal: AbortSignal.timeout(4000) });
+  if (!r.ok) return null;
+  const items = (await r.json()).items || [];
+  const hm = (d) => new Date(d).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem', hour: 'numeric', minute: '2-digit', hour12: false });
+  const c = items.find((i) => i.category === 'candles');
+  const h = items.find((i) => i.category === 'havdalah');
+  const p = items.find((i) => i.category === 'parashat');
+  if (!c && !h) return null;
+  return `${p?.hebrew ? `${p.hebrew}. ` : ''}${c ? `הדלקת נרות בירושלים והסביבה בשעה ${hm(c.date)}` : ''}${c && h ? ', ' : ''}${h ? `צאת השבת בשעה ${hm(h.date)}` : ''}. הזמנים לפי לוח ירושלים, כדאי לבדוק בלוח המקומי`;
+}
+
 // שעה ותאריך לפי שעון ישראל, בלי לפנות ל-AI
 function quickAnswer(q) {
   const t = String(q).replace(/[?.!,]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -260,6 +273,30 @@ async function chatMode(call, opts = {}) {
     if (/^\s*(היסטוריה|ההיסטוריה|מה שאלתי|מה דיברנו|שיחות קודמות)[^.?!]{0,15}[.?!]?\s*$/.test(q)) {
       await historyMode(call);
       await speak(call, 'חזרנו לשיחה. מה עוד?');
+      continue;
+    }
+    // פקודות מהירות שלא צריכות AI: מהירות דיבור, עזרה, תשובות קצרות
+    const qq = q.replace(/[?.!,]/g, '').trim();
+    let cmd = null;
+    if (/^(תדבר|דבר|תקריא)? ?(יותר )?(לאט|לאט יותר|יותר לאט)$/.test(qq)) {
+      users.setSetting(call.phone, 'speed', 'slow');
+      cmd = 'בסדר, אדבר לאט יותר';
+    } else if (/^(תדבר|דבר|תקריא)? ?(יותר )?(מהר|מהר יותר|יותר מהר)$/.test(qq)) {
+      users.setSetting(call.phone, 'speed', 'fast');
+      cmd = 'בסדר, אדבר מהר יותר';
+    } else if (/^(תדבר|דבר)? ?(במהירות|בקצב) רגיל[הא]?$/.test(qq)) {
+      users.setSetting(call.phone, 'speed', 'normal');
+      cmd = 'חזרתי לקצב רגיל';
+    } else if (/^(עזרה|מה אתה יודע לעשות|מה אפשר לעשות|מה אפשר לבקש|מה אתה יכול לעשות)$/.test(qq)) {
+      cmd = 'אפשר לשאול אותי כל שאלה, לבקש שאחפש משהו, ואחר כך לומר תיכנס לשם. אפשר לבקש מייל, יומן, משימות, אנשי קשר וקבצים מהדרייב, להיכנס למתמחים טופ, ולבקש שאזכור משהו. באמצע הקראה, הקשה על מקש עוצרת אותי ואפשר לדבר. אפשר גם לומר תדבר לאט, תדבר מהר, תחזור על זה, היסטוריה, או תפריט';
+    } else if (/^(תענה|תדבר)? ?(בקצרה|קצר|יותר קצר|תקצר)( מעכשיו| תמיד)?$/.test(qq)) {
+      users.addPref(call.phone, 'מעדיף תשובות קצרות מאוד, משפט או שניים');
+      cmd = 'בסדר, מעכשיו אענה בקצרה';
+    }
+    if (!cmd && /(נכנסת|יוצאת|כניסת|יציאת|הדלקת נרות|זמני) ?(ה)?שבת|הדלקת נרות|מוצאי שבת|הבדלה/.test(qq)) cmd = await waitFor(call, shabbatTimes()).catch(() => null);
+    if (cmd) {
+      last = cmd;
+      await sayThenListen(cmd);
       continue;
     }
     // תשובות מיידיות בלי AI: שעה, יום ותאריך (עברי ולועזי)

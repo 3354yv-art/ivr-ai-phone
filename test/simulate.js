@@ -263,6 +263,8 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   check('סקריפט גוגל: מייל דרך הסקריפט', un[0].from === 'רבקה' && un[0].fromAddr === 'r@x.com');
   const QA = await drive('callQa', ['1', 'מה השעה', 'איזה יום היום', 'די', '0']);
   check('תשובות מיידיות: שעה ויום', said(QA.transcript, 'השעה') && said(QA.transcript, 'היום יום'));
+  const QC = await drive('callQc', ['1', 'תדבר לאט', 'עזרה', 'תדבר בקצב רגיל', 'די', '0']);
+  check('פקודות מהירות: מהירות דיבור ועזרה', said(QC.transcript, 'אדבר לאט') && said(QC.transcript, 'חזרתי לקצב רגיל'));
   // פקודות קוליות על שירותי גוגל דרך הפעולה הכללית api
   globalThis.__gscript = (action, args) => {
     if (action !== 'api') return undefined;
