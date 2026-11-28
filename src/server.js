@@ -311,7 +311,9 @@ async function chatMode(call, opts = {}) {
       case 'drive':
       case 'contacts':
       case 'tasks':
-      case 'add_task': {
+      case 'add_task':
+      case 'files':
+      case 'youtube_mine': {
         const g = users.getGScript(call.phone);
         if (!g) {
           answer = 'בשביל זה צריך לחבר את חשבון הגוגל שלך. עושים את זה באיזור האישי באתר, בכרטיס חיבור חשבון גוגל';
@@ -327,6 +329,20 @@ async function chatMode(call, opts = {}) {
             const x = await waitFor(call, gscript.api(g, 'get', u));
             const hits = (x.data?.results || []).map((h) => h.person).filter((p) => p?.phoneNumbers?.length).slice(0, 3);
             answer = hits.length ? hits.map((p) => `${p.names?.[0]?.displayName || ''}: ${p.phoneNumbers[0].value.replace(/\D/g, '').split('').join(' ')}`).join('. ') : 'לא מצאתי איש קשר כזה';
+          } else if (r.action === 'files') {
+            const mt = { slides: 'presentation', forms: 'form', sheets: 'spreadsheet', docs: 'document' }[r.kind] || 'document';
+            const nm = String(r.query || '').replace(/['\\]/g, '').slice(0, 60);
+            const q = `mimeType='application/vnd.google-apps.${mt}' and trashed=false${nm ? ` and name contains '${nm}'` : ''}`;
+            const x = await waitFor(call, gscript.api(g, 'get', 'https://www.googleapis.com/drive/v3/files?pageSize=8&orderBy=modifiedTime%20desc&fields=files(name)&q=' + encodeURIComponent(q)));
+            const fl = (x.data?.files || []).map((f) => f.name).filter(Boolean);
+            const kindName = { slides: 'מצגות', forms: 'טפסים', sheets: 'גיליונות', docs: 'מסמכים' }[r.kind] || 'קבצים';
+            answer = fl.length ? `מצאתי ${fl.length} ${kindName}, מהחדש לישן: ${fl.join('. ')}` : `לא מצאתי ${kindName}`;
+          } else if (r.action === 'youtube_mine') {
+            const subs = r.what === 'subscriptions';
+            const u = subs ? 'https://www.googleapis.com/youtube/v3/subscriptions?mine=true&part=snippet&maxResults=15' : 'https://www.googleapis.com/youtube/v3/playlists?mine=true&part=snippet&maxResults=15';
+            const x = await waitFor(call, gscript.api(g, 'get', u));
+            const it = (x.data?.items || []).map((i) => i.snippet?.title).filter(Boolean);
+            answer = it.length ? `${subs ? 'אתה עוקב אחרי' : 'יש לך רשימות השמעה'}: ${it.join('. ')}` : (subs ? 'לא מצאתי ערוצים שאתה עוקב אחריהם' : 'לא מצאתי רשימות השמעה');
           } else if (r.action === 'tasks') {
             const x = await waitFor(call, gscript.api(g, 'get', 'https://tasks.googleapis.com/tasks/v1/lists/@default/tasks?showCompleted=false&maxResults=20'));
             const ts = (x.data?.items || []).map((t) => t.title).filter(Boolean);
