@@ -124,7 +124,7 @@ async function listenRaw(call, prompt, maxLen = 25) {
 }
 
 // מקריא טקסט בקטעים. 1 או 0 = עצירה, 4 = אחורה, 6 = דילוג
-async function speak(call, text) {
+async function speak(call, text, anyKey = false) {
   // כל מה שהקו אומר נרשם לתיק, חוץ מתוכן מיילים
   if (!call.noLog && text) logAnswer(call.phone, 'הקו אמר', String(text).slice(0, 2000));
   const parts = chunk(text);
@@ -142,9 +142,9 @@ async function speak(call, text) {
       sec_wait: 1,
       allow_empty: true,
       empty_val: 'None',
-      digits_allowed: [0, 1, 4, 6],
+      digits_allowed: anyKey ? [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] : [0, 1, 4, 6],
     });
-    if (k === '0' || k === '1') return 'stop';
+    if (k === '0' || k === '1' || (anyKey && /^\d$/.test(k || '') && k !== '4' && k !== '6')) return 'stop';
     if (k === '4') i = Math.max(0, i - 1);
     else i += 1;
   }
@@ -222,7 +222,11 @@ async function chatMode(call, opts = {}) {
       if (!nl && text) logAnswer(call.phone, 'הקו אמר', String(text).slice(0, 2000));
       call.noLog = true;
       try {
-        await speak(call, head);
+        // הקשה על מקש כלשהו באמצע ההקראה עוצרת אותה ועוברת ישר להאזנה לפקודה
+        if ((await speak(call, head, true)) === 'stop') {
+          prompt = 'כן, מה הפקודה?';
+          return;
+        }
       } finally {
         call.noLog = nl;
       }
@@ -249,7 +253,7 @@ async function chatMode(call, opts = {}) {
     }
     if (!(await quotaOk(call))) return;
     // "תיכנס לתוצאה השנייה" אחרי חיפוש
-    const ord = sources.length && q.match(/(?:תיכנס|תפתח|כנס|פתח)[^\d]*(ראשונ|שני|שלישי|רביעי|1|2|3|4)/);
+    const ord = sources.length && q.match(/(?:תיכנס|תפתח|כנס|פתח)[^\d]*(ראשונ|שני|שלישי|רביעי|1|2|3|4)/) || (sources.length && /^\s*(?:ת?יכנס|תפתח|פתח|כנס)(?:\s+(?:לשם|אליו|אליה|לאתר|לתוצאה))?\s*[.!?]*\s*$/.test(q) ? [0, 'ראשונ'] : null);
     if (ord) {
       const n = { ראשונ: 0, שני: 1, שלישי: 2, רביעי: 3, 1: 0, 2: 1, 3: 2, 4: 3 }[ord[1]];
       if (sources[n]) {
@@ -272,17 +276,23 @@ async function chatMode(call, opts = {}) {
         await speak(call, 'חוזרים לתפריט');
         return;
       case 'search': {
-        if (/מתמחים|mitmachim/i.test(r.query || q)) {
-          await forumMode(call, 'mitmachim.top');
-          answer = 'חזרנו לשיחה. מה עוד?';
-          break;
-        }
         const res = await waitFor(call, ai.search(await waitFor(call, ai.fixQuery(r.query || q)), persona()));
         answer = res.answer;
         sources = res.sources || [];
+        if (r.enter === true && /מתמחים|mitmachim/i.test(r.query || q)) {
+          await forumMode(call, 'mitmachim.top');
+          answer = 'חזרנו. מחכה להוראות';
+          break;
+        }
+        if (r.enter === true && sources[0]) {
+          await speak(call, `נכנס ל${sources[0].title}`);
+          await browse(call, sources[0].url);
+          answer = 'חזרנו. מחכה להוראות';
+          break;
+        }
         if (sources.length && !call.sourcesHinted) {
           call.sourcesHinted = true;
-          answer += ' אפשר גם לומר תיכנס לראשון, כדי לפתוח את התוצאה הראשונה, או מקורות, כדי לשמוע מאיפה זה.';
+          answer += ' אפשר גם לומר תיכנס לשם, כדי לפתוח את התוצאה הראשונה, או מקורות, כדי לשמוע מאיפה זה.';
         }
         break;
       }

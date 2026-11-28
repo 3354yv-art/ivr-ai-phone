@@ -4,6 +4,7 @@
 export function clean(text) {
   return String(text ?? '')
     .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/צ['’׳]?אט(ים)?/g, 'צדיק אתים')
     .replace(/(\d)\.(\d)/g, '$1 נקודה $2')
     .replace(/%/g, ' אחוז ')
     .replace(/&/g, ' ו ')
