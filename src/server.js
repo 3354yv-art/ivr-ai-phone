@@ -293,7 +293,7 @@ async function chatMode(call, opts = {}) {
       users.addPref(call.phone, 'מעדיף תשובות קצרות מאוד, משפט או שניים');
       cmd = 'בסדר, מעכשיו אענה בקצרה';
     }
-    if (!cmd && /(נכנסת|יוצאת|כניסת|יציאת|הדלקת נרות|זמני) ?(ה)?שבת|הדלקת נרות|מוצאי שבת|הבדלה/.test(qq)) cmd = await waitFor(call, shabbatTimes()).catch(() => null);
+    if (!cmd && /(נכנסת|יוצאת|כניסת|יציאת|הדלקת נרות|זמני) ?(ה)?שבת|הדלקת נרות|מוצאי שבת|הבדלה/.test(qq)) cmd = await waitFor(call, shabbatTimes().catch(() => null));
     if (cmd) {
       last = cmd;
       await sayThenListen(cmd);
