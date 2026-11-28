@@ -136,6 +136,17 @@ ${googleVoiceOn() ? `<p>קול העוזר: <select name="voice">${VOICES.map((x)
 <div class="card"><h2>קיצורי אתרים</h2><p>שם קצר לאתר שאתם נכנסים אליו הרבה. בקו: חיפוש ואתרים, ואז 4. או פשוט אומרים את השם בכניסה לאתר.</p><ul>${(u.shortcuts || []).map((s, i) => `<li><b>${esc(s.name)}</b>: <span dir="ltr">${esc(s.url)}</span> <form method="post" action="/my/shortcut/del" style="display:inline"><input type="hidden" name="i" value="${i}"><button class="gray" style="padding:2px 10px;font-size:13px">מחק</button></form></li>`).join('') || '<li>אין עדיין</li>'}</ul>
 <form method="post" action="/my/shortcut"><input name="name" placeholder="שם הקיצור, למשל: חדשות" required maxlength="60" style="width:100%"><input name="url" dir="ltr" placeholder="https://..." required style="width:100%"><button>הוסף קיצור</button></form></div>
 ${isDonor(phone) ? '' : `<div class="card"><h2>תומכי הקו</h2><p>מי שתורם מפתח חינמי של Groq מקבל מענה מהיר בעדיפות, שאלות ללא הגבלה, תשובות מורחבות וזיכרון גדול. <a class="btn" href="/donate">להצטרפות</a></p></div>`}
+<div class="card"><h2>מה אפשר לבקש מהעוזר</h2><details><summary class="note">דוגמאות לדברים שאפשר לומר בשיחה (לחצו להצגה)</summary><ul>
+<li><b>מידע:</b> "מה מזג האוויר בירושלים", "מי היה הרמב״ם". אחרי התשובה אפשר לומר "תיכנס לראשון" או "מקורות".</li>
+<li><b>אתרים:</b> "תיכנס ל..." ואז לבקש מהעוזר לקרוא, לסכם או להיכנס לקישור.</li>
+<li><b>מייל:</b> "תקריא לי מיילים", "תשלח מייל".</li>
+<li><b>יומן:</b> "מה יש לי ביומן מחר", "תקבע לי פגישה ביום שלישי בעשר".</li>
+<li><b>משימות:</b> "מה ברשימת המשימות שלי", "תוסיף משימה לקנות חלב".</li>
+<li><b>אנשי קשר:</b> "מה המספר של דוד כהן".</li>
+<li><b>קבצים:</b> "תחפש בדרייב את...", "אילו מצגות יש לי", "אילו טפסים יש לי", "אילו גיליונות יש לי".</li>
+<li><b>יוטיוב:</b> "אילו רשימות השמעה יש לי", "אחרי אילו ערוצים אני עוקב".</li>
+<li><b>זיכרון והגדרות:</b> "תזכור ש...", "היסטוריה", "תשנה את הקול".</li>
+</ul><p class="note">פעולות המייל, היומן, המשימות, אנשי הקשר והקבצים עובדות אחרי חיבור חשבון גוגל.</p></details></div>
 <div class="card"><h2>השיחות שלי</h2><p class="note">בכחול: מה שאמרתם. באפור: מה שהקו ענה.</p>${hist}</div>`));
   });
 

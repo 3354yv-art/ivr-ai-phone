@@ -1548,6 +1548,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (!cfg.key) console.warn('אזהרה: IVR_KEY לא מוגדר, השרת פתוח לכל מי שמכיר את הכתובת');
   if (cfg.aiProvider === 'gemini' && !cfg.geminiKey && !cfg.mock) console.warn('אזהרה: חסר GEMINI_API_KEY');
   console.log(`מנוע AI: ${cfg.aiProvider}`);
+  // שגיאה בשיחה אחת (למשל ניתוק באמצע בקשה) לא מפילה את השרת ואת שאר השיחות
+  process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.stack || e));
+  process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.stack || e));
   const app = createApp();
   app.listen(cfg.port, () => console.log(`IVR server on :${cfg.port}`));
   // פורט נוסף (למשל 6080) לכניסה מהדפדפן כשחומת האש של השרת סוגרת את 3000

@@ -108,7 +108,7 @@ export async function fixQuery(q) {
 let searxBlockedUntil = 0;
 async function searxSearch(query) {
   const u = `${cfg.searxUrl}/search?format=json&language=he&safesearch=1&q=${encodeURIComponent(query)}`;
-  const r = await fetch(u, { signal: AbortSignal.timeout(4500) });
+  const r = await fetch(u, { signal: AbortSignal.timeout(3500) });
   if (!r.ok) throw new Error(`searx ${r.status}`);
   const j = await r.json();
   return (j.results || []).slice(0, 6).map((x) => ({ title: x.title || '', url: x.url || '', snippet: x.content || '' })).filter((x) => x.title);
