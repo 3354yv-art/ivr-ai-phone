@@ -261,6 +261,8 @@ check('התאמה אישית: נשמר מהאיזור האישי ומ"תזכור
   const prov = gs.mailProvider('u', secret);
   const un = await prov.unread(5);
   check('סקריפט גוגל: מייל דרך הסקריפט', un[0].from === 'רבקה' && un[0].fromAddr === 'r@x.com');
+  const QA = await drive('callQa', ['1', 'מה השעה', 'איזה יום היום', 'די', '0']);
+  check('תשובות מיידיות: שעה ויום', said(QA.transcript, 'השעה') && said(QA.transcript, 'היום יום'));
   // פקודות קוליות על שירותי גוגל דרך הפעולה הכללית api
   globalThis.__gscript = (action, args) => {
     if (action !== 'api') return undefined;

@@ -196,6 +196,17 @@ async function historyMode(call) {
   }
 }
 
+// שעה ותאריך לפי שעון ישראל, בלי לפנות ל-AI
+function quickAnswer(q) {
+  const t = String(q).replace(/[?.!,]/g, ' ').replace(/\s+/g, ' ').trim();
+  const f = (o, loc = 'he-IL') => new Intl.DateTimeFormat(loc, { timeZone: 'Asia/Jerusalem', ...o }).format(new Date());
+  if (/^(מה |כמה )?(השעה|השעה עכשיו|שעה)( עכשיו| כרגע)?$/.test(t) || /^כמה השעה/.test(t)) return `השעה ${f({ hour: 'numeric', minute: '2-digit', hour12: false })}`;
+  if (/^(איזה|מה) יום (היום|זה היום|הלילה)?$/.test(t)) return `היום יום ${f({ weekday: 'long' })}`;
+  if (/^(מה |איזה )?(התאריך העברי|התאריך היום העברי|תאריך עברי)( היום)?$/.test(t) || /^מה התאריך העברי/.test(t)) return `התאריך העברי היום, ${f({ day: 'numeric', month: 'long', year: 'numeric' }, 'he-u-ca-hebrew')}`;
+  if (/^(מה |איזה )?(התאריך|תאריך)( היום| הלועזי)?$/.test(t)) return `היום ${f({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`;
+  return null;
+}
+
 // ---------- שלוחה 1: צ'אט ----------
 // שיחה רציפה עם העוזר: מדברים, הוא עונה, ומיד אפשר לדבר שוב. בלי תפריטים באמצע.
 // לחיצה על 1 באמצע תשובה עוצרת אותה. "די" / "תפריט" / שתי שתיקות - חזרה לתפריט.
@@ -249,6 +260,15 @@ async function chatMode(call, opts = {}) {
     if (/^\s*(היסטוריה|ההיסטוריה|מה שאלתי|מה דיברנו|שיחות קודמות)[^.?!]{0,15}[.?!]?\s*$/.test(q)) {
       await historyMode(call);
       await speak(call, 'חזרנו לשיחה. מה עוד?');
+      continue;
+    }
+    // תשובות מיידיות בלי AI: שעה, יום ותאריך (עברי ולועזי)
+    const quick = quickAnswer(q);
+    if (quick) {
+      history.push({ role: 'user', text: q }, { role: 'model', text: quick });
+      users.saveLastChat(call.phone, history);
+      last = quick;
+      await sayThenListen(quick);
       continue;
     }
     if (!(await quotaOk(call))) return;
